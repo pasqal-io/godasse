@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pasqal-io/goode/assertions/testutils"
-	"github.com/pasqal-io/goode/validation"
+	"github.com/pasqal-io/godasse/assertions/testutils"
+	"github.com/pasqal-io/godasse/validation"
 )
 
 type ExamplePayload struct {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pasqal-io/goode/assertions/testutils"
-	"github.com/pasqal-io/goode/deserialize"
-	"github.com/pasqal-io/goode/validation"
+	"github.com/pasqal-io/godasse/assertions/testutils"
+	"github.com/pasqal-io/godasse/deserialize"
+	"github.com/pasqal-io/godasse/validation"
 )
 
 type SimpleStruct struct {

@@ -1,6 +1,6 @@
 # About
 
-Go's Other Deserializer, or Goode, is an alternative deserialization mechanism for Go.
+Go Deserializer for Application System Safety Engine (or Godasse) is an alternative deserialization mechanism for Go.
 
 # Why?
 
@@ -84,7 +84,7 @@ func main() {
     struct FetchRequest contains a field "number" that is not public, you should either make it public or specify an initializer with `CanInitialize` or `UnmarshalJSON`"
 ```
 
-Good catch, Goode! Let's fix that.
+Good catch, Godasse! Let's fix that.
 
 ```go
 type FetchRequest struct {
@@ -135,7 +135,7 @@ Well, this fails with
     missing primitive value at FetchRequestBasic.number, expected uint8
 ```
 
-If you're using Goode, that's probably what you expected!
+If you're using Godasse, that's probably what you expected!
 
 But in our format, we don't want to fail if `number` is unspecified, we'd like to
 default to `1`.
@@ -205,7 +205,7 @@ if deserialized.Options.MaxAgeMS != 10000 {
 
 The rules for `default` are as follows:
 
-- Goode **never** injects a default value on your sake;
+- Godasse **never** injects a default value on your sake;
 - for any scalar type (number, strings, booleans), you can specify any value that can be parsed;
 - for pointers, the only default value accepted is `nil`;
 - for slices and arrays, the only default value accepted is `[]`;
@@ -239,13 +239,13 @@ func (Options) DefaultMinDateMS() (uint64, error) {
 
 The rules for `orMethod` are as follows:
 
-- Goode **never** injects a `orMethod` on your sake;
+- Godasse **never** injects a `orMethod` on your sake;
 - you cannot have both a `orMethod` and a `default`;
 - the `orMethod` must be a method of the same struct;
 - the `orMethod` must take 0 arguments and return `(T, error)` where `T` is the type of your field;
 - the order in which `orMethod`s is called is unspecified (and actually varies).
 
-Don't worry, Goode will check these properties when generating the deserializer.
+Don't worry, Godasse will check these properties when generating the deserializer.
 
 ## Initializing private fields
 
@@ -256,7 +256,7 @@ The bad news is that tags cannot be attached to private fields (well,
 they can, but Go libraries can't see the private fields or tags), so
 we can't use `orMethod` or `default`.
 
-For this purpose, Goode has an interface `CanInitialize`, which 
+For this purpose, Godasse has an interface `CanInitialize`, which 
 can be implemented as such:
 
 ```go
@@ -277,18 +277,18 @@ func (request* AdvancedFetchRequest) Initialize() error {
 var _ goode.validation.CanInitialize = &AdvancedFetchRequest{}
 ```
 
-Now, Goode will run `Initialize()` to fill in any missing fields,
+Now, Godasse will run `Initialize()` to fill in any missing fields,
 including private fields.
 
 The rules for `CanInitialize` are as follows:
 
-- Goode **never** injects a `CanInitialize` on your sake;
+- Godasse **never** injects a `CanInitialize` on your sake;
 - `Initialize` must be a method of the same struct;
 - `Initialize` must take 0 arguments and return `error`;
 - `Initialize` must be implemented on a pointer, rather than a struct (otherwise any change would be lost immediately);
 - `Initialize` is called immediately after creating the struct, before parsing the fields.
 
-Again, Goode will check these rules while creating the deserializer.
+Again, Godasse will check these rules while creating the deserializer.
 
 ## Validating/rewriting data
 
@@ -309,11 +309,11 @@ func (request *AdvancedFetchRequest) Validate() error {
 var _ goode.validation.CanValidate = &AdvancedFetchRequest{}
 ```
 
-Now Goode will run `Validate()` to confirm that everything is valid.
+Now Godasse will run `Validate()` to confirm that everything is valid.
 
 The rules for `CanValidate` are as follows:
 
-- Goode **never** injects a `CanValidate` on your sake;
+- Godasse **never** injects a `CanValidate` on your sake;
 - `Validate` must be a method of the same struct;
 - `Validate` must take 0 arguments and return `error`;
 - `Validate` must be implemented on a pointer, rather than a struct;

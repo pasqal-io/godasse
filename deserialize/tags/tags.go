@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/pasqal-io/goode/assertions/initialized"
+	"github.com/pasqal-io/godasse/assertions/initialized"
 )
 
 // A representation of the tags for a given field.

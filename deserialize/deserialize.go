@@ -71,8 +71,8 @@ import (
 	"strconv"
 	"strings"
 
-	tagsPkg "github.com/pasqal-io/goode/deserialize/tags"
-	"github.com/pasqal-io/goode/validation"
+	tagsPkg "github.com/pasqal-io/godasse/deserialize/tags"
+	"github.com/pasqal-io/godasse/validation"
 )
 
 // Options used while setting up a deserializer.
