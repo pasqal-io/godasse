@@ -68,11 +68,11 @@ you do at startup, as it is going to verify a number of important properties.
 
 ```go
 func main() {
-    options := goode.deserialize.Options {
+    options := godasse.deserialize.Options {
         // We want to apply the renamings from tag `json`.
         MainTagName: "json",
     }
-    deserializer, err := goode.deserialize.MakeMapDeserializer[FetchRequest](options)
+    deserializer, err := godasse.deserialize.MakeMapDeserializer[FetchRequest](options)
     if err != nil {
         panic(err)
     }
@@ -274,7 +274,7 @@ func (request* AdvancedFetchRequest) Initialize() error {
 }
 
 // Double-check that we have implemented CanInitialize.
-var _ goode.validation.CanInitialize = &AdvancedFetchRequest{}
+var _ godasse.validation.CanInitialize = &AdvancedFetchRequest{}
 ```
 
 Now, Godasse will run `Initialize()` to fill in any missing fields,
@@ -306,7 +306,7 @@ func (request *AdvancedFetchRequest) Validate() error {
 }
 
 // Double-check that we have implemented CanValidate.
-var _ goode.validation.CanValidate = &AdvancedFetchRequest{}
+var _ godasse.validation.CanValidate = &AdvancedFetchRequest{}
 ```
 
 Now Godasse will run `Validate()` to confirm that everything is valid.
