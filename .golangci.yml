@@ -24,7 +24,6 @@ linters:
     - gosmopolitan
     - govet
     - mirror
-    - musttag
     - nolintlint
     - nosprintfhostport
     - perfsprint
