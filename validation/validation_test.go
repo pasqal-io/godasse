@@ -70,9 +70,9 @@ var _ validation.CanValidate = &ExampleCanValidate{} //nolint:exhaustruct
 // See the tests for deserialize for more advanced checks.
 func TestValidation(t *testing.T) {
 	// This should pass validation.
-	good := ExampleCanValidate{
+	good := ExampleCanValidate{ //nolint:exhaustruct
 		Kind: "one",
-	} //nolint:exhaustruct
+	}
 	err := good.Validate()
 	if err != nil {
 		t.Error(err)
@@ -82,9 +82,9 @@ func TestValidation(t *testing.T) {
 	testutils.AssertEqual(t, good.kindIndex, 1, "Field kindIndex should have been set")
 
 	// This shouldn't.
-	bad := ExampleCanValidate{
+	bad := ExampleCanValidate{ //nolint:exhaustruct
 		Kind: "three",
-	} //nolint:exhaustruct
+	}
 	err = bad.Validate()
 	testutils.AssertEqual(t, err.Error(), "Invalid schema kind three", "Validation should reject")
 }

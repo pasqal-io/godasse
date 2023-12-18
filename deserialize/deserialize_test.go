@@ -84,7 +84,7 @@ func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output,
 		t.Error(err)
 		return nil, err //nolint:wrapcheck
 	}
-	return deserializer.DeserializeMap(dict)
+	return deserializer.DeserializeMap(dict) //nolint:wrapcheck
 }
 func twoWays[T any](t *testing.T, sample T) (*T, error) {
 	return twoWaysGeneric[T, T](t, sample)

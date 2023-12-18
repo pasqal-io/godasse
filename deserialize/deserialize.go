@@ -143,7 +143,7 @@ func (me mapDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
 	dict := new(Dict)
 	err := json.Unmarshal(source, &dict)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck
 	}
 	return me(*dict)
 }
@@ -160,7 +160,7 @@ func (me mapDeserializer[T]) DeserializeString(source string) (*T, error) {
 func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
-		tagName = "json"
+		tagName = JSON
 	}
 	return makeOuterStructDeserializer[T](options.RootPath, staticOptions{
 		renamingTagName: tagName,
@@ -181,7 +181,7 @@ func (me kvListDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
 	dict := new(kvList)
 	err := json.Unmarshal(source, &dict)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck
 	}
 	return me(*dict)
 }
@@ -193,7 +193,7 @@ func (me kvListDeserializer[T]) DeserializeString(source string) (*T, error) {
 func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
-		tagName = "json"
+		tagName = JSON
 	}
 	innerOptions := staticOptions{
 		renamingTagName: tagName,
@@ -297,6 +297,8 @@ var canUnmarshal = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 // The interface `error`.
 var errorInterface = reflect.TypeOf((*error)(nil)).Elem()
 
+const JSON = "json"
+
 // Construct a statically-typed deserializer.
 //
 // Under the hood, this uses the reflectDeserializer.
@@ -373,7 +375,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 		if err != nil {
 			return nil, err
 		}
-		canUnmarshalSelf := options.renamingTagName == "json" && reflect.PointerTo(typ).Implements(canUnmarshal)
+		canUnmarshalSelf := options.renamingTagName == JSON && reflect.PointerTo(typ).Implements(canUnmarshal)
 		if canInitializeSelf && canUnmarshalSelf {
 			slog.Warn("At %s, type %s supports both CanInitialize and Unmarshaler, defaulting to Unmarshaler")
 		}
