@@ -28,7 +28,7 @@ fairly sophisticated, error-prone and need to be discovered manually, as they ap
 undocumented.
 
 
-By opposition, Gourde:
+By opposition, Godasse:
 
 - supports a simple mechanism to provide default values or constructor for `undefined` or private fields;
 - rejects messages with `undefined` field if no default value or constructor has been provided.
@@ -47,7 +47,7 @@ library doesn't.
 Again, there are patterns that let a developer work around such issues, but they're more complicated,
 undocumented and error-prone than they seem.
 
-By opposition, Gourde supports a simple mechanism to provide validation.
+By opposition, Godasse supports a simple mechanism to provide validation.
 
 
 # Usage
@@ -324,7 +324,126 @@ The rules for `CanValidate` are as follows:
 
 ## Implementing Unmarshaler
 
-(To be Documented)
+With a little elbow grease, Go supports initialization and validation with
+`Unmarshal`.
+
+Let us start with our example
+
+```go
+// Additional options for fetching.
+type Options struct {
+    // Accept responses that have been generated since `MinDateMS`.
+    //
+    // Defaults to "now minus 10s".
+    MinDateMS uint64 `json:minDateMS`
+}
+
+
+type AdvancedFetchRequest struct {
+    Resource string `json:"resource"`
+    Number   uint8  `json:"number"`
+    Options  Options `json:"options"`
+
+    // The instant at which the request was received.
+    date     Time
+}
+```
+
+Now, we can implement `UnmarshalJSON` for `Options` to setup default values:
+
+```go
+// Critically, implement it on `*Options`, not on `Options`.
+func (dest *Options) UnmarshalJSON(buf []byte) error {
+    // Prepare our result.
+    result := new(Options)
+    // Pre-initialize fields.
+    result.MinDateMS = time.Now().UnixMilli() - 10000
+ 
+    // Perform deserialization.
+    err := json.Unmarshal(result)
+    if err != nil {
+        // TODO: Presumably, add some context.
+        return err
+    }
+    return *result
+}
+```
+
+That's... not too bad. A bit repetitive and error-prone but we can live with that.
+
+Now, what about `AdvancedFetchRequest`? Ah, well, there it's a bit more complicated
+because we want the ability to detect whether a field is left undefined:
+
+```go
+func (dest *AdvancedFetchRequest) UnmarshalJSON(buf []byte) error {
+    // The same type as `AdvancedFetchRequest`, except every field is a pointer.
+    type Aux struct {
+        Resource *string
+        Number   *uint8
+        Options  *Options
+    }
+    aux := new(Aux)
+
+    // First, unmarshal to the pointerized type.
+    err := json.Unmarshal(aux)
+    if err != nil {
+        // TODO: Presumably, add some context.
+        return err
+    }
+
+    // Reject nil fields.
+    if aux.Resource == nil {
+        return fmt.ErrorF("In AdvancedFetchRequest, field `resource` should be specified")
+    }
+    resource := *aux.Resource
+
+    if aux.Number == nil {
+        return fmt.ErrorF("In AdvancedFetchRequest, field `Number` should be specified")
+    }
+    number := *aux.Number
+
+    // Or inject default values.
+    if aux.Options == nil {
+        err = json.Unmarshal("{}", aux.Options)
+        if err != nil {
+            // Wait, how could his happen?
+            return err
+        }
+    }
+    options := *aux.Options
+
+    // Inject default values for private fields.
+    time := time.Now()
+
+    // Reconstruct destination field.
+    dest.Resource = resource
+    dest.Number = number
+    dest.Options = options
+    dest.time = time
+
+    // Perform validation.
+    if dest.Number > 100 {
+        return fmt.Errorf("Invalid number, expected a value in [0, 100], got %d", request.number)
+    }
+
+    // Finally, we should be good.
+    return nil
+}
+```
+
+Pros of this approach:
+
+- No dependency.
+
+Cons of this approach:
+
+- For some reason, I couldn't find any documentation on this approach.
+- Only works with JSON.
+- More verbose.
+- More error-prone.
+- No detection of errors at startup.
+- Worse error messages.
+- You don't get to use a module called "godasse".
 
 ## Json schema
 
