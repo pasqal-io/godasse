@@ -6,14 +6,13 @@ Go Deserializer for Application System Safety Engine (or Godasse) is an alternat
 
 Go provides the core of a mechanism to deserialize data, but it has several shortcomings.
 
-## No support for `undefined`/missing fields
+## No support for missing fields
 
 Most serialization formats (JSON, YAML, XML, etc.) differentiate between a
-value that is `undefined` (i.e. literally not part of the message) and a value that is
-specified as empty (e.g. `null` or `""`).
+value that is not part of the message (or fields specified as `undefined`
+in JavaScript) and a value that is specified as empty (e.g. `null` or `""`).
 
-
-By opposition and by design, Go's `encoding/json` does not make the difference between `undefined` and a
+By opposition and by design, Go's `encoding/json` does not make the difference between a missing field and a
 zero value. While this is _often_ an acceptable choice, there are many cases in which
 the default value specified by a protocol is not 0. For instance:
 
@@ -30,8 +29,8 @@ undocumented.
 
 By opposition, Godasse:
 
-- supports a simple mechanism to provide default values or constructor for `undefined` or private fields;
-- rejects messages with `undefined` field if no default value or constructor has been provided.
+- supports a simple mechanism to provide default values or constructor for missing or private fields;
+- rejects messages with missing field if no default value or constructor has been provided.
 
 ## No support for validation
  
@@ -189,7 +188,7 @@ type AdvancedFetchRequest struct {
 }
 ```
 
-In this case, if `options` is undefined, it will default to `{}`
+In this case, if `options` is missing, it will default to `{}`
 *and* its contents are initialized using the default values
 specified in `Options`.
 
@@ -372,7 +371,7 @@ func (dest *Options) UnmarshalJSON(buf []byte) error {
 That's... not too bad. A bit repetitive and error-prone but we can live with that.
 
 Now, what about `AdvancedFetchRequest`? Ah, well, there it's a bit more complicated
-because we want the ability to detect whether a field is left undefined:
+because we want the ability to detect whether a field is missing:
 
 ```go
 func (dest *AdvancedFetchRequest) UnmarshalJSON(buf []byte) error {
@@ -434,6 +433,10 @@ func (dest *AdvancedFetchRequest) UnmarshalJSON(buf []byte) error {
 Pros of this approach:
 
 - No dependency.
+- You get to write more Go code!
+- You get to spend more time debugging Go code!
+- You get to spend more time debugging Go code *in production*!
+- You get to write more tests!
 
 Cons of this approach:
 
@@ -442,7 +445,7 @@ Cons of this approach:
 - More verbose.
 - More error-prone.
 - No detection of errors at startup.
-- Worse error messages.
+- Less precise error messages.
 - You don't get to use a module called "godasse".
 
 ## Json schema
