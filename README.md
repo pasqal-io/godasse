@@ -79,7 +79,7 @@ func main() {
 
 ...and run this! Oops, we have a panic!
 ```
-    struct FetchRequest contains a field "number" that is not public, you should either make it public or specify an initializer with `CanInitialize` or `UnmarshalJSON`"
+    struct FetchRequest contains a field "number" that is not public, you should either make it public or specify an initializer with `Initializer` or `UnmarshalJSON`"
 ```
 
 Good catch, Godasse! Let's fix that.
@@ -98,7 +98,7 @@ Alright, now our code passes!
 Let's test it
 
 ```go
-deserialized, err := deserializer.DeserializeString(`{
+deserialized, err := deserializer.DeserializeJSONString(`{
     "resource": "/a/b/c",
     "number": 1
 }`)
@@ -118,7 +118,7 @@ fmt.Print("We have deserialized ", *deserialized)
 Now, what happens if we forget a field?
 
 ```go
-deserialized, err := deserializer.DeserializeString(`{
+deserialized, err := deserializer.DeserializeJSONString(`{
     "resource": "/a/b/c",
 }`)
 
@@ -154,7 +154,7 @@ type FetchRequest struct {
 Let's test this:
 
 ```go
-deserialized, err := deserializer.DeserializeString(`{
+deserialized, err := deserializer.DeserializeJSONString(`{
     "resource": "/a/b/c",
 }`)
 
@@ -192,7 +192,7 @@ In this case, if `options` is missing, it will default to `{}`
 specified in `Options`.
 
 ```go
-deserialized, err := deserializer.DeserializeString(`{
+deserialized, err := deserializer.DeserializeJSONString(`{
     "resource": "/a/b/c",
 }`)
 
@@ -254,7 +254,7 @@ The bad news is that tags cannot be attached to private fields (well,
 they can, but Go libraries can't see the private fields or tags), so
 we can't use `orMethod` or `default`.
 
-For this purpose, Godasse has an interface `CanInitialize`, which 
+For this purpose, Godasse has an interface `Initializer`, which 
 can be implemented as such:
 
 ```go
@@ -271,16 +271,16 @@ func (request* AdvancedFetchRequest) Initialize() error {
     request.date = time.Now()
 }
 
-// Double-check that we have implemented CanInitialize.
-var _ godasse.validation.CanInitialize = &AdvancedFetchRequest{}
+// Double-check that we have implemented Initializer.
+var _ godasse.validation.Initializer = &AdvancedFetchRequest{}
 ```
 
 Now, Godasse will run `Initialize()` to fill in any missing fields,
 including private fields.
 
-The rules for `CanInitialize` are as follows:
+The rules for `Initializer` are as follows:
 
-- Godasse **never** injects a `CanInitialize` on your sake;
+- Godasse **never** injects a `Initializer` on your sake;
 - `Initialize` must be a method of the same struct;
 - `Initialize` must take 0 arguments and return `error`;
 - `Initialize` must be implemented on a pointer, rather than a struct (otherwise any change would be lost immediately);
@@ -303,15 +303,15 @@ func (request *AdvancedFetchRequest) Validate() error {
     return nil
 }
 
-// Double-check that we have implemented CanValidate.
-var _ godasse.validation.CanValidate = &AdvancedFetchRequest{}
+// Double-check that we have implemented Validator.
+var _ godasse.validation.Validator = &AdvancedFetchRequest{}
 ```
 
 Now Godasse will run `Validate()` to confirm that everything is valid.
 
-The rules for `CanValidate` are as follows:
+The rules for `Validator` are as follows:
 
-- Godasse **never** injects a `CanValidate` on your sake;
+- Godasse **never** injects a `Validator` on your sake;
 - `Validate` must be a method of the same struct;
 - `Validate` must take 0 arguments and return `error`;
 - `Validate` must be implemented on a pointer, rather than a struct;
@@ -389,6 +389,7 @@ Pros of this approach:
 Cons of this approach:
 
 - Very easy to miss checking one field and end up with a crash in production.
+- A bit awkward if the same `struct` is shared between several messages.
 - Downstream code now needs to deals with pointers, even if pointers are not the appropriate data structure.
 - More verbose.
 - No detection of errors at startup.
