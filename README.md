@@ -1,6 +1,6 @@
 # About
 
-Go Deserializer for Application System Safety Engine (or Godasse) is an alternative deserialization mechanism for Go.
+Go Deserializer for Acceptable Safety Side-Engine (or Godasse) is an alternative deserialization mechanism for Go.
 
 # Why?
 
@@ -25,7 +25,6 @@ the default value specified by a protocol is not 0. For instance:
 While there are patterns that let a developer work around such issues, these patterns are
 fairly sophisticated, error-prone and need to be discovered manually, as they appear wholly
 undocumented.
-
 
 By opposition, Godasse:
 
@@ -321,6 +320,82 @@ The rules for `CanValidate` are as follows:
 
 # Alternatives
 
+## Making every field a pointer
+
+The recommended workaround to detect missing fields is to:
+
+1. Define every field as a pointer.
+2. Write a pass that checks every `nil` field and replaces it with an adequate default value.
+
+This means rewriting our example as follows:
+
+```go:
+type Options struct {
+    MinDateMS *uint64 `json:minDateMS`
+}
+
+type AdvancedFetchRequest struct {
+    Resource *string `json:"resource"`
+    Number   *uint8  `json:"number"`
+    Options  *Options `json:"options"`
+
+    // The instant at which the request was received.
+    date     *Time
+}
+
+func deserialize(buf []byte) (*AdvancedFetchRequest, error) {
+    result := new(AdvancedFetchRequest)
+
+    err := json.Unmarshal(buf, result)
+    if err != nil {
+        // FIXME: Presumably add some context
+        return nil, err
+    }
+
+    // Check for missing fields.
+    if result.Resource == nil {
+        return nil, fmt.ErrorF("in AdvancedFetchRequest, field `resource` should be specified")
+    }
+    if result.Number == nil {
+        return nil, fmt.ErrorF("in AdvancedFetchRequest, field `number` should be specified")
+    }
+    if result.Options == nil {
+        result.Options = &Options {}
+    }
+
+    // Check for missing fields within fields.
+    if result.Options.MinDateMS == nil {
+        result.Options.MinDateMS = time.Now().UnixMilli() - 10000
+    }
+
+    result.date = &time.Time()
+
+    // Perform validation.
+    if result.Number > 100 {
+        return nil, fmt.Errorf("invalid number, expected a value in [0, 100], got %d", result.Number)
+    }
+
+    // Perform validation within fields.
+    // (in this case, nothing to do)
+
+    return result, nil
+}
+```
+
+Pros of this approach:
+
+- No dependency.
+
+Cons of this approach:
+
+- Very easy to miss checking one field and end up with a crash in production.
+- Downstream code now needs to deals with pointers, even if pointers are not the appropriate data structure.
+- More verbose.
+- No detection of errors at startup.
+- Less precise error messages.
+- You don't get to use a module called "godasse".
+
+
 ## Implementing Unmarshaler
 
 With a little elbow grease, Go supports initialization and validation with
@@ -359,7 +434,7 @@ func (dest *Options) UnmarshalJSON(buf []byte) error {
     result.MinDateMS = time.Now().UnixMilli() - 10000
  
     // Perform deserialization.
-    err := json.Unmarshal(result)
+    err := json.Unmarshal(buf, result)
     if err != nil {
         // TODO: Presumably, add some context.
         return err
@@ -392,12 +467,12 @@ func (dest *AdvancedFetchRequest) UnmarshalJSON(buf []byte) error {
 
     // Reject nil fields.
     if aux.Resource == nil {
-        return fmt.ErrorF("In AdvancedFetchRequest, field `resource` should be specified")
+        return fmt.ErrorF("in AdvancedFetchRequest, field `resource` should be specified")
     }
     resource := *aux.Resource
 
     if aux.Number == nil {
-        return fmt.ErrorF("In AdvancedFetchRequest, field `Number` should be specified")
+        return fmt.ErrorF("in AdvancedFetchRequest, field `Number` should be specified")
     }
     number := *aux.Number
 
@@ -422,7 +497,7 @@ func (dest *AdvancedFetchRequest) UnmarshalJSON(buf []byte) error {
 
     // Perform validation.
     if dest.Number > 100 {
-        return fmt.Errorf("Invalid number, expected a value in [0, 100], got %d", request.number)
+        return fmt.Errorf("invalid number, expected a value in [0, 100], got %d", request.number)
     }
 
     // Finally, we should be good.
