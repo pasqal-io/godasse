@@ -81,13 +81,13 @@ func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output,
 		t.Error(err)
 		return nil, err //nolint:wrapcheck
 	}
-	dict := make(map[string]any)
+	dict := make(jsonPkg.JSON)
 	err = json.Unmarshal(buf, &dict)
 	if err != nil {
 		t.Error(err)
 		return nil, err //nolint:wrapcheck
 	}
-	return deserializer.DeserializeMap(dict) //nolint:wrapcheck
+	return deserializer.DeserializeDict(dict) //nolint:wrapcheck
 }
 func twoWays[T any](t *testing.T, sample T) (*T, error) {
 	return twoWaysGeneric[T, T](t, sample)
@@ -209,6 +209,7 @@ func TestGenerics(t *testing.T) {
 	after, err := twoWays[Pair[PrimitiveTypesStruct, SimpleStruct]](t, before)
 	if err != nil {
 		t.Error(err)
+		return
 	}
 	testutils.AssertEqual(t, *after, before, "We should have recovered the same struct")
 }

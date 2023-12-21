@@ -73,14 +73,14 @@ import (
 	"github.com/pasqal-io/godasse/deserialize/internal"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
 	"github.com/pasqal-io/godasse/deserialize/kvlist"
+	"github.com/pasqal-io/godasse/deserialize/shared"
 	tagsPkg "github.com/pasqal-io/godasse/deserialize/tags"
 	"github.com/pasqal-io/godasse/validation"
 )
 
 // -------- Public API --------
 
-type Unmarshaler = internal.Driver
-type Dict = internal.Dict
+type Unmarshaler = shared.Driver
 
 // Options for building a deserializer.
 //
@@ -149,7 +149,7 @@ type Deserializer[To any] interface {
 // Use this to deserialize e.g. JSON bodies.
 type MapDeserializer[To any] interface {
 	Deserializer[To]
-	DeserializeMap(map[string]any) (*To, error)
+	DeserializeDict(shared.Dict) (*To, error)
 }
 
 // A deserializer from key, lists of values.
@@ -189,13 +189,12 @@ func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], erro
 		return nil, err
 	}
 	deserializer := func(value kvlist.KVList) (*T, error) {
-		// Normalize the map[string][]any into Dict
-		normalized := make(Dict)
-		err := deListMap[T](normalized, value, innerOptions)
+		normalized := new(jsonPkg.JSON)
+		err := deListMap[T](*normalized, value, innerOptions)
 		if err != nil {
 			return nil, fmt.Errorf("error attempting to deserialize from a list of entries:\n\t * %w", err)
 		}
-		return wrapped.deserializer(normalized)
+		return wrapped.deserializer(*normalized)
 	}
 	return kvListDeserializer[T]{
 		deserializer: deserializer,
@@ -220,26 +219,20 @@ type staticOptions struct {
 
 // A deserializer from (key, value) maps.
 type mapDeserializer[T any] struct {
-	deserializer func(value Dict) (*T, error)
+	deserializer func(value shared.Dict) (*T, error)
 	options      staticOptions
 }
 
-func (me mapDeserializer[T]) DeserializeMap(value Dict) (*T, error) {
+func (me mapDeserializer[T]) DeserializeDict(value shared.Dict) (*T, error) {
 	return me.deserializer(value)
 }
 
 func (me mapDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
-	dict := new(Dict)
-	if !me.options.unmarshaler.ShouldUnmarshal(reflect.TypeOf(*dict)) {
-		return nil, fmt.Errorf("this deserializer does not support deserializing from bytes")
-	}
-
-	var dictAny any = dict
-	err := me.options.unmarshaler.Unmarshal(source, &dictAny)
+	dict, err := me.options.unmarshaler.Dict(source)
 	if err != nil {
 		return nil, err //nolint:wrapcheck
 	}
-	return me.deserializer(*dict)
+	return me.deserializer(dict)
 }
 
 func (me mapDeserializer[T]) DeserializeString(source string) (*T, error) {
@@ -276,7 +269,7 @@ func (me kvListDeserializer[T]) DeserializeString(source string) (*T, error) {
 
 // Convert a `map[string][]string` (as provided e.g. by the query parser) into a `Dict`
 // (as consumed by this parsing mechanism).
-func deListMap[T any](outMap Dict, inMap map[string][]string, options staticOptions) error {
+func deListMap[T any](outMap map[string]any, inMap map[string][]string, options staticOptions) error {
 	var fakeValue *T
 	reflectedT := reflect.TypeOf(fakeValue).Elem()
 	if reflectedT.Kind() != reflect.Struct {
@@ -342,7 +335,7 @@ func deListMap[T any](outMap Dict, inMap map[string][]string, options staticOpti
 }
 
 // A type of deserializers using reflection to perform any conversions.
-type reflectDeserializer func(slot *reflect.Value, data *interface{}) error
+type reflectDeserializer func(slot *reflect.Value, data shared.Value) error
 
 // The interface `validation.Initializer`, which we use throughout the code
 // to pre-initialize structs.
@@ -388,7 +381,7 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 	}
 
 	var result = mapDeserializer[T]{
-		deserializer: func(value Dict) (*T, error) {
+		deserializer: func(value shared.Dict) (*T, error) {
 			result := new(T)
 			if shouldPreinitialize {
 				var resultAny any = result
@@ -407,8 +400,8 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 				}
 			}
 			resultSlot := reflect.ValueOf(result).Elem()
-			var input any = value
-			err := reflectDeserializer(&resultSlot, &input)
+			input := value.AsValue()
+			err := reflectDeserializer(&resultSlot, input)
 			if err != nil {
 				return nil, err
 			}
@@ -429,7 +422,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 	switch typ.Kind() {
 	case reflect.Struct:
 		selfContainer := reflect.New(typ)
-		deserializers := make(map[string]func(outPtr *reflect.Value, inMap Dict) error)
+		deserializers := make(map[string]func(outPtr *reflect.Value, inMap shared.Dict) error)
 
 		// If this structure supports self-initialization or custom unmarshaling, we don't need (or use)
 		// default fields and `orMethod` constructors.
@@ -489,29 +482,22 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 			if err != nil {
 				return nil, err
 			}
-			fieldDeserializer := func(outPtr *reflect.Value, inMap Dict) error {
+			fieldDeserializer := func(outPtr *reflect.Value, inMap shared.Dict) error {
 				// Note: maps are references, so there is no loss to passing a `map` instead of a `*map`.
 				// Use the `fieldName` to access the field in the record.
 				outReflect := outPtr.FieldByName(fieldNativeName)
 
 				// Use the `publicFieldName` to access the field in the map.
-				var fieldValue any
-				var contentPtr *any
+				var fieldValue shared.Value
 				if isPublic {
 					// If the field is public, we can accept external data, if provided.
 					var ok bool
-					fieldValue, ok = inMap[*publicFieldName]
-					if ok {
-						contentPtr = &fieldValue
-					} else {
-						contentPtr = nil
+					fieldValue, ok = inMap.Lookup(*publicFieldName)
+					if !ok {
+						fieldValue = nil
 					}
-				} else {
-					// If the field is private, we should ignore any data provided by
-					// a client.
-					contentPtr = nil
 				}
-				err := fieldContentDeserializer(&outReflect, contentPtr)
+				err := fieldContentDeserializer(&outReflect, fieldValue)
 				if err != nil {
 					return err
 				}
@@ -538,7 +524,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 			return nil, fmt.Errorf("at %s, failed to setup `orMethod`\n\t * %w", path, err)
 		}
 
-		result := func(outPtr *reflect.Value, inPtr *interface{}) (err error) {
+		result := func(outPtr *reflect.Value, inValue shared.Value) (err error) {
 			resultPtr := reflect.New(typ)
 			result := resultPtr.Elem()
 
@@ -570,11 +556,10 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 				}
 			}()
 			switch {
-			case inPtr != nil:
+			case inValue != nil:
 				// We have all the data we need, proceed.
 			case isZeroDefault || wasPreInitialized:
-				var inValue any = make(map[string]any, 0)
-				inPtr = &inValue
+				inValue = internal.EmptyValue{}
 			case orMethod != nil:
 				constructed, err := (*orMethod)()
 				if err != nil {
@@ -590,13 +575,12 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 				return err
 			}
 
-			inValue := *inPtr
 			if canUnmarshalSelf {
 				// Our struct supports `Unmarshaler`. This means that:
 				//
 				// - it enforces its own invariants (we do not perform pre-initialization or in-depth validation);
 				// - from the point of view of the outside world, this MUST be a string.
-				inString, ok := inValue.(string)
+				inString, ok := inValue.Interface().(string)
 				if !ok {
 					err = fmt.Errorf("invalid value at %s, expected a string holding a %s, got %s", path, typeName(typ), inValue)
 					return err
@@ -609,7 +593,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 				}
 			} else {
 				// Our `any` should be a dictionary.
-				inMap, ok := inValue.(Dict)
+				inMap, ok := inValue.AsDict()
 				if !ok {
 					err = fmt.Errorf("invalid value at %s, expected an object of type %s, got %s", path, typeName(typ), result.Type().Name())
 					return err
@@ -669,7 +653,7 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate a deserializer for %s\n\t * %w", fieldPath, err)
 	}
-	result := func(outPtr *reflect.Value, inPtr *any) (err error) {
+	result := func(outPtr *reflect.Value, inValue shared.Value) (err error) {
 		var reflectedResult reflect.Value
 
 		// Don't forget to perform validation (unless we're returning an error).
@@ -690,30 +674,27 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 		}()
 
 		// Move into array
-		var input any
+		var input []shared.Value
 		switch {
-		case inPtr != nil:
-			// Deserialize.
-			input = *inPtr
+		case inValue != nil:
+			// Simply deserialize.
+			var ok bool
+			if input, ok = inValue.AsSlice(); !ok {
+				return fmt.Errorf("error while deserializing %s[]: expected an array", fieldType)
+			}
 		case isEmptyDefault:
 			// Nothing to deserialize, but we are allowed to default to an empty array.
-			input = reflect.MakeSlice(fieldType, 0, 0).Interface()
+			input = make([]shared.Value, 0)
 		case orMethod != nil:
 			// Nothing to deserialize, but we know how to build a default value.
-			input, err = (*orMethod)()
+			orMethodResult, err := (*orMethod)()
 			if err != nil {
 				return fmt.Errorf("error in optional value at %s\n\t * %w", fieldPath, err)
 			}
-			reflectedInput := reflect.ValueOf(input)
-			reflectedResult = reflect.MakeSlice(fieldType, 0, reflectedInput.Len())
-			for i := 0; i < reflectedInput.Len(); i++ {
-				reflectedResult = reflect.Append(reflectedResult, reflectedInput.Index(i))
-
-				if err != nil {
-					return fmt.Errorf("error while deserializing %s[%d]:\n\t * %w", fieldPath, i, err)
-				}
-			}
-			outPtr.Set(reflectedResult)
+			reflectedOrMethodSlice := reflect.ValueOf(orMethodResult)
+			result := reflect.MakeSlice(fieldType, 0, reflectedOrMethodSlice.Len())
+			result = reflect.AppendSlice(result, reflectedOrMethodSlice)
+			outPtr.Set(result)
 			return nil
 		case wasPreinitialized:
 			// No value? That's ok, we got a value from preinitialization.
@@ -721,26 +702,12 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 			return fmt.Errorf("missing value at %s, expected an array of %s", arrayPath, fieldPath)
 		}
 
-		reflectedInput := reflect.ValueOf(input)
-
-		// Is this an array/slice? Good!
-		switch reflectedInput.Kind() {
-		case reflect.Array:
-			fallthrough
-		case reflect.Slice:
-			// Good.
-		default:
-			return fmt.Errorf("invalid value at %s, expected an array, got %s", arrayPath, reflectedInput.Type().Name())
-		}
-
-		reflectedResult = reflect.MakeSlice(fieldType, reflectedInput.Len(), reflectedInput.Len())
+		reflectedResult = reflect.MakeSlice(fieldType, len(input), len(input))
 
 		// Recurse into entries.
-		for i := 0; i < reflectedInput.Len(); i++ {
+		for i, inAtIndex := range input {
 			outAtIndex := reflectedResult.Index(i)
-			inAtIndex := reflectedInput.Index(i).Interface()
-
-			err := elementDeserializer(&outAtIndex, &inAtIndex)
+			err := elementDeserializer(&outAtIndex, inAtIndex)
 			if err != nil {
 				return fmt.Errorf("error while deserializing %s[%d]:\n\t * %w", fieldPath, i, err)
 			}
@@ -783,9 +750,9 @@ func makePointerDeserializer(fieldPath string, fieldType reflect.Type, options s
 		return nil, fmt.Errorf("at %s, failed to setup `orMethod`\n\t * %w", fieldPath, err)
 	}
 
-	result := func(outPtr *reflect.Value, inPtr *any) (err error) {
+	result := func(outPtr *reflect.Value, inValue shared.Value) (err error) {
 		switch {
-		case inPtr != nil:
+		case inValue != nil:
 			// We have all the data we need, proced.
 		case wasPreinitialized:
 			// No value? That's ok, we got a value from preinitialization.
@@ -805,13 +772,12 @@ func makePointerDeserializer(fieldPath string, fieldType reflect.Type, options s
 			return nil
 		}
 
-		// Move into array
-		input := *inPtr
+		// Move into ptr
 		reflectedPtrResult := reflect.New(elemType)
 		reflectedResult := reflectedPtrResult.Elem()
-		err = elementDeserializer(&reflectedResult, &input)
+		err = elementDeserializer(&reflectedResult, inValue)
 		if err != nil {
-			return fmt.Errorf("error while deserializing *%s:\n\t * %w", fieldPath, err)
+			return err //nolint:wrapcheck
 		}
 
 		// Note: We do not perform validation here as validation has already happened
@@ -862,7 +828,7 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 	if err != nil {
 		return nil, fmt.Errorf("at %s, failed to setup `orMethod`\n\t * %w", fieldPath, err)
 	}
-	result := func(outPtr *reflect.Value, inPtr *any) (err error) {
+	result := func(outPtr *reflect.Value, inValue shared.Value) (err error) {
 		var reflectedInput reflect.Value
 
 		// Don't forget to perform validation (unless we're returning an error).
@@ -884,9 +850,9 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 
 		var input any
 		switch {
-		case inPtr != nil:
-			// We have all the data we need, proced.
-			input = *inPtr
+		case inValue != nil:
+			// We have all the data we need, proceed.
+			input = inValue.Interface()
 		case wasPreinitialized:
 			input = outPtr.Interface()
 		case defaultValue != nil:
