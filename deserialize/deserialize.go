@@ -64,29 +64,28 @@
 package deserialize
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
 
+	"github.com/pasqal-io/godasse/deserialize/internal"
+	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
+	"github.com/pasqal-io/godasse/deserialize/kvlist"
 	tagsPkg "github.com/pasqal-io/godasse/deserialize/tags"
 	"github.com/pasqal-io/godasse/validation"
 )
 
-// Options used while setting up a deserializer.
-type staticOptions struct {
-	// The name of tag used for renamings (e.g. "json").
-	renamingTagName string
+// -------- Public API --------
 
-	// If true, allow the outer struct to contain arrays, slices and inner structs.
-	//
-	// Otherwise, the outer struct is only allowed to contain flat types.
-	allowNested bool
-}
+type Unmarshaler = internal.Driver
+type Dict = internal.Dict
 
 // Options for building a deserializer.
+//
+// See also JSONOptions, QueryOptions, etc. for reasonable
+// default values.
 type Options struct {
 	// The name of tags used for renamings (e.g. "json").
 	//
@@ -105,15 +104,44 @@ type Options struct {
 	// Optional. If you leave this blank, no human-readable
 	// information will be added.
 	RootPath string
+
+	// An unmarshaler, used to deserialize values when they
+	// are provided as []byte or string.
+	Unmarshaler Unmarshaler
 }
 
 // The de facto JSON type in Go.
-type Dict = map[string]any
+
+// A preset fit for consuming JSON.
+//
+// Params:
+//   - root A human-readable root (e.g. the name of the endpoint). Used only
+//     for error reporting. `""` is a perfectly acceptable root.
+func JSONOptions(root string) Options {
+	return Options{
+		MainTagName: "json",
+		RootPath:    root,
+		Unmarshaler: jsonPkg.Driver{},
+	}
+}
+
+// A preset fit for consuming Queries.
+//
+// Params:
+//   - root A human-readable root (e.g. the name of the endpoint). Used only
+//     for error reporting. `""` is a perfectly acceptable root.
+func QueryOptions(root string) Options {
+	return Options{
+		MainTagName: "query",
+		RootPath:    root,
+		Unmarshaler: kvlist.Driver{},
+	}
+}
 
 // A deserializer from strings or buffers.
 type Deserializer[To any] interface {
-	DeserializeJSONString(string) (*To, error)
-	DeserializeJSONBytes([]byte) (*To, error)
+	DeserializeString(string) (*To, error)
+	DeserializeBytes([]byte) (*To, error)
 }
 
 // A deserializers from dictionaries
@@ -129,34 +157,10 @@ type MapDeserializer[To any] interface {
 // Use this to deserialize e.g. query strings.
 type KVListDeserializer[To any] interface {
 	Deserializer[To]
-	DeserializeKVList(map[string][]string) (*To, error)
-}
-
-// A deserializer from (key, value) maps.
-type mapDeserializer[T any] func(value Dict) (*T, error)
-
-func (me mapDeserializer[T]) DeserializeMap(value Dict) (*T, error) {
-	return me(value)
-}
-
-func (me mapDeserializer[T]) DeserializeJSONBytes(source []byte) (*T, error) {
-	dict := new(Dict)
-	err := json.Unmarshal(source, &dict)
-	if err != nil {
-		return nil, err //nolint:wrapcheck
-	}
-	return me(*dict)
-}
-
-func (me mapDeserializer[T]) DeserializeJSONString(source string) (*T, error) {
-	return me.DeserializeJSONBytes([]byte(source))
+	DeserializeKVList(kvlist.KVList) (*To, error)
 }
 
 // Create a deserializer from Dict.
-//
-//   - `path` a human-readable path (e.g. the name of the endpoint) or "" if you have nothing
-//     useful for human beings;
-//   - `tagName` the name of tags to use for field renamings, e.g. `json`.
 func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
@@ -165,54 +169,109 @@ func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 	return makeOuterStructDeserializer[T](options.RootPath, staticOptions{
 		renamingTagName: tagName,
 		allowNested:     true,
+		unmarshaler:     options.Unmarshaler,
 	})
 }
 
-type kvList = map[string][]string
-
-// A deserializer from (key, []string) maps.
-type kvListDeserializer[T any] func(value kvList) (*T, error)
-
-func (me kvListDeserializer[T]) DeserializeKVList(value kvList) (*T, error) {
-	return me(value)
-}
-
-func (me kvListDeserializer[T]) DeserializeJSONBytes(source []byte) (*T, error) {
-	dict := new(kvList)
-	err := json.Unmarshal(source, &dict)
-	if err != nil {
-		return nil, err //nolint:wrapcheck
-	}
-	return me(*dict)
-}
-
-func (me kvListDeserializer[T]) DeserializeJSONString(source string) (*T, error) {
-	return me.DeserializeJSONBytes([]byte(source))
-}
-
+// Create a deserializer from (key, value list).
 func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
-		tagName = JSON
+		tagName = "query"
 	}
 	innerOptions := staticOptions{
 		renamingTagName: tagName,
 		allowNested:     false,
+		unmarshaler:     options.Unmarshaler,
 	}
 	wrapped, err := makeOuterStructDeserializer[T](options.RootPath, innerOptions)
 	if err != nil {
 		return nil, err
 	}
-	var result kvListDeserializer[T] = func(value map[string][]string) (*T, error) {
+	deserializer := func(value kvlist.KVList) (*T, error) {
 		// Normalize the map[string][]any into Dict
 		normalized := make(Dict)
 		err := deListMap[T](normalized, value, innerOptions)
 		if err != nil {
 			return nil, fmt.Errorf("error attempting to deserialize from a list of entries:\n\t * %w", err)
 		}
-		return (*wrapped)(normalized)
+		return wrapped.deserializer(normalized)
 	}
-	return &result, nil
+	return kvListDeserializer[T]{
+		deserializer: deserializer,
+		options:      innerOptions,
+	}, nil
+}
+
+// ----------------- Private
+
+// Options used while setting up a deserializer.
+type staticOptions struct {
+	// The name of tag used for renamings (e.g. "json").
+	renamingTagName string
+
+	// If true, allow the outer struct to contain arrays, slices and inner structs.
+	//
+	// Otherwise, the outer struct is only allowed to contain flat types.
+	allowNested bool
+
+	unmarshaler Unmarshaler
+}
+
+// A deserializer from (key, value) maps.
+type mapDeserializer[T any] struct {
+	deserializer func(value Dict) (*T, error)
+	options      staticOptions
+}
+
+func (me mapDeserializer[T]) DeserializeMap(value Dict) (*T, error) {
+	return me.deserializer(value)
+}
+
+func (me mapDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
+	dict := new(Dict)
+	if !me.options.unmarshaler.ShouldUnmarshal(reflect.TypeOf(*dict)) {
+		return nil, fmt.Errorf("this deserializer does not support deserializing from bytes")
+	}
+
+	var dictAny any = dict
+	err := me.options.unmarshaler.Unmarshal(source, &dictAny)
+	if err != nil {
+		return nil, err //nolint:wrapcheck
+	}
+	return me.deserializer(*dict)
+}
+
+func (me mapDeserializer[T]) DeserializeString(source string) (*T, error) {
+	return me.DeserializeBytes([]byte(source))
+}
+
+// A deserializer from (key, []string) maps.
+type kvListDeserializer[T any] struct {
+	deserializer func(value kvlist.KVList) (*T, error)
+	options      staticOptions
+}
+
+func (me kvListDeserializer[T]) DeserializeKVList(value kvlist.KVList) (*T, error) {
+	return me.deserializer(value)
+}
+
+func (me kvListDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
+	kvList := new(kvlist.KVList)
+	if !me.options.unmarshaler.ShouldUnmarshal(reflect.TypeOf(*kvList)) {
+		return nil, fmt.Errorf("this deserializer does not support deserializing from bytes")
+	}
+
+	var kvListAny any = kvList
+	err := me.options.unmarshaler.Unmarshal(source, &kvListAny)
+	if err != nil {
+		return nil, err //nolint:wrapcheck
+	}
+	return me.deserializer(*kvList)
+}
+
+func (me kvListDeserializer[T]) DeserializeString(source string) (*T, error) {
+	return me.DeserializeBytes([]byte(source))
 }
 
 // Convert a `map[string][]string` (as provided e.g. by the query parser) into a `Dict`
@@ -290,10 +349,6 @@ type reflectDeserializer func(slot *reflect.Value, data *interface{}) error
 var canInitializeInterface = reflect.TypeOf((*validation.Initializer)(nil)).Elem()
 var canValidateInterface = reflect.TypeOf((*validation.Validator)(nil)).Elem()
 
-// The interface `json.Unmarshaler`, which we use throughout the code
-// to decode data structures that cannot be decoded natively from JSON.
-var canUnmarshal = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
-
 // The interface `error`.
 var errorInterface = reflect.TypeOf((*error)(nil)).Elem()
 
@@ -308,6 +363,10 @@ const JSON = "json"
 //   - `tagName` the name of tags to use for field renamings, e.g. `query`.
 func makeOuterStructDeserializer[T any](path string, options staticOptions) (*mapDeserializer[T], error) {
 	container := new(T) // An uninitialized container, used to extract type information and call initializer methods.
+
+	if options.unmarshaler == nil {
+		panic("Please specify an unmarshaler")
+	}
 
 	// Pre-check if we're going to perform initialization.
 	typ := reflect.TypeOf(*container)
@@ -328,31 +387,34 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 		return nil, err
 	}
 
-	var result mapDeserializer[T] = func(value Dict) (*T, error) {
-		result := new(T)
-		if shouldPreinitialize {
-			var resultAny any = result
-			initializer, ok := resultAny.(validation.Initializer)
-			var err error
-			if !ok {
-				err = fmt.Errorf("we have already checked that the result can be converted to `Initializer` but conversion has failed")
-			} else {
-				err = initializer.Initialize()
-			}
-			if err != nil {
-				err = fmt.Errorf("at %s, encountered an error while initializing optional fields:\n\t * %w", path, err)
-				slog.Error("internal error during deserialization", "error", err)
-				return nil, err
+	var result = mapDeserializer[T]{
+		deserializer: func(value Dict) (*T, error) {
+			result := new(T)
+			if shouldPreinitialize {
+				var resultAny any = result
+				initializer, ok := resultAny.(validation.Initializer)
+				var err error
+				if !ok {
+					err = fmt.Errorf("we have already checked that the result can be converted to `Initializer` but conversion has failed")
+				} else {
+					err = initializer.Initialize()
+				}
+				if err != nil {
+					err = fmt.Errorf("at %s, encountered an error while initializing optional fields:\n\t * %w", path, err)
+					slog.Error("internal error during deserialization", "error", err)
+					return nil, err
 
+				}
 			}
-		}
-		resultSlot := reflect.ValueOf(result).Elem()
-		var input any = value
-		err := reflectDeserializer(&resultSlot, &input)
-		if err != nil {
-			return nil, err
-		}
-		return result, nil
+			resultSlot := reflect.ValueOf(result).Elem()
+			var input any = value
+			err := reflectDeserializer(&resultSlot, &input)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		},
+		options: options,
 	}
 	return &result, nil
 }
@@ -375,9 +437,10 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 		if err != nil {
 			return nil, err
 		}
-		canUnmarshalSelf := options.renamingTagName == JSON && reflect.PointerTo(typ).Implements(canUnmarshal)
+		canUnmarshalSelf := options.unmarshaler.ShouldUnmarshal(typ)
 		if canInitializeSelf && canUnmarshalSelf {
 			slog.Warn("At %s, type %s supports both Initializer and Unmarshaler, defaulting to Unmarshaler")
+			canInitializeSelf = false
 		}
 		willPreinitialize := canInitializeSelf || canUnmarshalSelf
 
@@ -444,7 +507,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 						contentPtr = nil
 					}
 				} else {
-					// If the field is private, so we should ignore any data provided by
+					// If the field is private, we should ignore any data provided by
 					// a client.
 					contentPtr = nil
 				}
@@ -538,13 +601,8 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 					err = fmt.Errorf("invalid value at %s, expected a string holding a %s, got %s", path, typeName(typ), inValue)
 					return err
 				}
-				unmarshaler, ok := resultPtr.Interface().(json.Unmarshaler)
-				if !ok {
-					err = fmt.Errorf("result should support json.Unmarshaler but conversion failed")
-					slog.Error("Internal error during deserialization", "error", err)
-				} else {
-					err = unmarshaler.UnmarshalJSON([]byte(inString))
-				}
+				resultPtrAny := resultPtr.Interface()
+				err = options.unmarshaler.Unmarshal([]byte(inString), &resultPtrAny)
 				if err != nil {
 					err = fmt.Errorf("invalid string at %s, expected to be able to parse a %s:\n\t * %w", path, typeName(typ), err)
 					return err
@@ -770,11 +828,11 @@ func makePointerDeserializer(fieldPath string, fieldType reflect.Type, options s
 //   - `typ` the dynamic type for the field being compiled;
 //   - `tagName` the name of tags to use for field renamings, e.g. `query`;
 //   - `tags` the table of tags for this field.
-func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, _ staticOptions, tags *tagsPkg.Tags, container reflect.Value, wasPreinitialized bool) (reflectDeserializer, error) {
+func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options staticOptions, tags *tagsPkg.Tags, container reflect.Value, wasPreinitialized bool) (reflectDeserializer, error) {
 	typeName := typeName(fieldType)
 
 	// A parser in case we receive our data as a string.
-	parser, err := makeParser(fieldType)
+	parser, err := makeParser(fieldType, options)
 	if err != nil {
 		return nil, fmt.Errorf("at %s, failed to build a parser:\n\t * %w", fieldPath, err)
 	}
@@ -837,12 +895,12 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, _ stati
 			constructed, err := (*orMethod)()
 			if err != nil {
 				err = fmt.Errorf("error in optional value at %s\n\t * %w", fieldPath, err)
-				slog.Error("Internal error during deserialization", err)
+				slog.Error("Internal error during deserialization", "error", err)
 				return err
 			}
 			input = constructed
 		default:
-			return fmt.Errorf("missing primitive value at %s, expected %s", fieldPath, typeName)
+			return fmt.Errorf("missing value at %s, expected %s", fieldPath, typeName)
 		}
 
 		// Type check: can our value convert to the expected type?
@@ -929,7 +987,7 @@ func typeName(typ reflect.Type) string {
 // A parser for strings into primitive values.
 type parser func(source string) (any, error)
 
-func makeParser(fieldType reflect.Type) (*parser, error) {
+func makeParser(fieldType reflect.Type, options staticOptions) (*parser, error) {
 	var result *parser
 	switch fieldType.Kind() {
 	case reflect.Bool:
@@ -1004,27 +1062,20 @@ func makeParser(fieldType reflect.Type) (*parser, error) {
 		}
 		result = &p
 	default:
-		if fieldType.Implements(canUnmarshal) {
+		if options.unmarshaler.ShouldUnmarshal(fieldType) {
 			var p parser = func(source string) (any, error) {
-				reflectedContent := reflect.New(fieldType)
 				bytes := []byte(source)
-				unmarshaler, ok := reflectedContent.Interface().(json.Unmarshaler)
-				var err error
-				if !ok {
-					err = fmt.Errorf("result should support json.Unmarshaler but conversion failed")
-					slog.Error("internal error during deserialization", "error", err)
-				} else {
-					err = unmarshaler.UnmarshalJSON(bytes)
-				}
+				result := reflect.New(fieldType).Interface()
+				err := options.unmarshaler.Unmarshal(bytes, &result)
 				if err != nil {
 					err = fmt.Errorf("invalid string at, expected to be able to parse a %s:\n\t * %w", typeName(fieldType), err)
 					return nil, err
 				}
-				return unmarshaler, nil
+				return result, nil
 			}
 			result = &p
 		} else {
-			return nil, fmt.Errorf("this type cannot be deserialized")
+			return nil, fmt.Errorf("type %s cannot be deserialized", fieldType)
 		}
 	}
 
