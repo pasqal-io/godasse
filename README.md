@@ -329,7 +329,7 @@ The recommended workaround to detect missing fields is to:
 
 This means rewriting our example as follows:
 
-```go:
+```go
 type Options struct {
     MinDateMS *uint64 `json:minDateMS`
 }
@@ -343,10 +343,10 @@ type AdvancedFetchRequest struct {
     date     *Time
 }
 
-func deserialize(buf []byte) (*AdvancedFetchRequest, error) {
+func deserialize(data []byte) (*AdvancedFetchRequest, error) {
     result := new(AdvancedFetchRequest)
 
-    err := json.Unmarshal(buf, result)
+    err := json.Unmarshal(data, result)
     if err != nil {
         // FIXME: Presumably add some context
         return nil, err
@@ -429,10 +429,8 @@ Now, we can implement `UnmarshalJSON` for `Options` to setup default values:
 ```go
 // Critically, implement it on `*Options`, not on `Options`.
 func (dest *Options) UnmarshalJSON(buf []byte) error {
-    // Prepare our result.
-    result := new(Options)
     // Pre-initialize fields.
-    result.MinDateMS = time.Now().UnixMilli() - 10000
+    dest.MinDateMS = time.Now().UnixMilli() - 10000
  
     // Perform deserialization.
     err := json.Unmarshal(buf, result)
@@ -440,7 +438,7 @@ func (dest *Options) UnmarshalJSON(buf []byte) error {
         // TODO: Presumably, add some context.
         return err
     }
-    return *result
+    return nil
 }
 ```
 
