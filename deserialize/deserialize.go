@@ -10,7 +10,7 @@
 //
 // If you have a struct `FooSchema` that you wish to deserialize:
 //
-// - To define default values for fields (in particular private fields), implement `CanInitialize`
+// - To define default values for fields (in particular private fields), implement `Initializer`
 //
 //	func (result *FooSchema) Initialize() err {
 //		  result.MyField1 = defaultValue1
@@ -19,9 +19,9 @@
 //	   return err
 //	}
 //
-// - To define a validator, implement `CanValidate`
+// - To define a validator, implement `Validator`
 //
-//			func (result *FooSchema) CanValidate() err {
+//			func (result *FooSchema) Validator() err {
 //			   if result.MyField1 > 100 {
 //	           return fmt.Errorf("invalid value for MyField1!") // The error will be visible to end users.
 //		    }
@@ -42,14 +42,14 @@
 // Different behavior:
 //   - this library also works for formats other than json, in which case instead of tag `json`,
 //     we use a specific tag (e.g. "query" or "path");
-//   - if a value implements `CanInitialize`, we run the initializer before deserializing
+//   - if a value implements `Initializer`, we run the initializer before deserializing
 //     the value (this is the only way to provide default values for private fields);
 //   - if a tag `default:"XXX"` is specified, we use this value when a field is not specified
 //     (by opposition, Go would silently insert zero values);
 //   - if a tag `orMethod:"XXX"` is specified, we attempt to call the corresponding method
 //     when a field is not specified (by opposition, Go would silently insert zero values);
 //   - if a tag `initialized:""` is specified, we will not complain
-//   - if a data structure supports `CanValidate`, we run validation during deserialization
+//   - if a data structure supports `Validator`, we run validation during deserialization
 //     and fail if validation rejects the value (by opposition, in Go, you need to run any
 //     validation step manually, after deserialization completes);
 //   - we attempt to detect errors early and fail when setting up the deserializer, instead
@@ -60,7 +60,7 @@
 // By design, Go will NOT let us deserialize, validate or apply default values to private
 // fields (i.e. fields which start lower-case). This is a decision that goes deep in the
 // language. If you have a private field, it will be initialized to its zero value unless
-// you implement `CanInitialize` on the struct containing.
+// you implement `Initializer` on the struct containing.
 package deserialize
 
 import (
@@ -112,8 +112,8 @@ type Dict = map[string]any
 
 // A deserializer from strings or buffers.
 type Deserializer[To any] interface {
-	DeserializeString(string) (*To, error)
-	DeserializeBytes([]byte) (*To, error)
+	DeserializeJSONString(string) (*To, error)
+	DeserializeJSONBytes([]byte) (*To, error)
 }
 
 // A deserializers from dictionaries
@@ -139,7 +139,7 @@ func (me mapDeserializer[T]) DeserializeMap(value Dict) (*T, error) {
 	return me(value)
 }
 
-func (me mapDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
+func (me mapDeserializer[T]) DeserializeJSONBytes(source []byte) (*T, error) {
 	dict := new(Dict)
 	err := json.Unmarshal(source, &dict)
 	if err != nil {
@@ -148,8 +148,8 @@ func (me mapDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
 	return me(*dict)
 }
 
-func (me mapDeserializer[T]) DeserializeString(source string) (*T, error) {
-	return me.DeserializeBytes([]byte(source))
+func (me mapDeserializer[T]) DeserializeJSONString(source string) (*T, error) {
+	return me.DeserializeJSONBytes([]byte(source))
 }
 
 // Create a deserializer from Dict.
@@ -177,7 +177,7 @@ func (me kvListDeserializer[T]) DeserializeKVList(value kvList) (*T, error) {
 	return me(value)
 }
 
-func (me kvListDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
+func (me kvListDeserializer[T]) DeserializeJSONBytes(source []byte) (*T, error) {
 	dict := new(kvList)
 	err := json.Unmarshal(source, &dict)
 	if err != nil {
@@ -186,8 +186,8 @@ func (me kvListDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
 	return me(*dict)
 }
 
-func (me kvListDeserializer[T]) DeserializeString(source string) (*T, error) {
-	return me.DeserializeBytes([]byte(source))
+func (me kvListDeserializer[T]) DeserializeJSONString(source string) (*T, error) {
+	return me.DeserializeJSONBytes([]byte(source))
 }
 
 func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], error) {
@@ -285,10 +285,10 @@ func deListMap[T any](outMap Dict, inMap map[string][]string, options staticOpti
 // A type of deserializers using reflection to perform any conversions.
 type reflectDeserializer func(slot *reflect.Value, data *interface{}) error
 
-// The interface `validation.CanInitialize`, which we use throughout the code
+// The interface `validation.Initializer`, which we use throughout the code
 // to pre-initialize structs.
-var canInitializeInterface = reflect.TypeOf((*validation.CanInitialize)(nil)).Elem()
-var canValidateInterface = reflect.TypeOf((*validation.CanValidate)(nil)).Elem()
+var canInitializeInterface = reflect.TypeOf((*validation.Initializer)(nil)).Elem()
+var canValidateInterface = reflect.TypeOf((*validation.Validator)(nil)).Elem()
 
 // The interface `json.Unmarshaler`, which we use throughout the code
 // to decode data structures that cannot be decoded natively from JSON.
@@ -332,10 +332,10 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 		result := new(T)
 		if shouldPreinitialize {
 			var resultAny any = result
-			initializer, ok := resultAny.(validation.CanInitialize)
+			initializer, ok := resultAny.(validation.Initializer)
 			var err error
 			if !ok {
-				err = fmt.Errorf("we have already checked that the result can be converted to `CanInitialize` but conversion has failed")
+				err = fmt.Errorf("we have already checked that the result can be converted to `Initializer` but conversion has failed")
 			} else {
 				err = initializer.Initialize()
 			}
@@ -377,11 +377,11 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 		}
 		canUnmarshalSelf := options.renamingTagName == JSON && reflect.PointerTo(typ).Implements(canUnmarshal)
 		if canInitializeSelf && canUnmarshalSelf {
-			slog.Warn("At %s, type %s supports both CanInitialize and Unmarshaler, defaulting to Unmarshaler")
+			slog.Warn("At %s, type %s supports both Initializer and Unmarshaler, defaulting to Unmarshaler")
 		}
 		willPreinitialize := canInitializeSelf || canUnmarshalSelf
 
-		// Early check that we're not mis-using `CanValidate`.
+		// Early check that we're not mis-using `Validator`.
 		_, err = canInterface(typ, canValidateInterface)
 		if err != nil {
 			return nil, err
@@ -416,7 +416,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 			// should not be parsed.
 			isPublic := (*publicFieldName != "-") && fieldNativeExported
 			if !isPublic && !willPreinitialize {
-				return nil, fmt.Errorf("struct %s contains a field \"%s\" that is not public, you should either make it public or specify an initializer with `CanInitialize` or `UnmarshalJSON`", path, fieldNativeName)
+				return nil, fmt.Errorf("struct %s contains a field \"%s\" that is not public, you should either make it public or specify an initializer with `Initializer` or `UnmarshalJSON`", path, fieldNativeName)
 			}
 
 			fieldPath := fmt.Sprint(path, ".", *publicFieldName)
@@ -453,7 +453,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 					return err
 				}
 
-				// At this stage, the field has already been validated by using `CanValidate.Validate()`.
+				// At this stage, the field has already been validated by using `Validator.Validate()`.
 				// In future versions, we may wish to add support for further validation using tags.
 				return nil
 			}
@@ -480,7 +480,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 			result := resultPtr.Elem()
 
 			// If possible, perform pre-initialization with default values.
-			if initializer, ok := resultPtr.Interface().(validation.CanInitialize); ok {
+			if initializer, ok := resultPtr.Interface().(validation.Initializer); ok {
 				err = initializer.Initialize()
 				wasPreInitialized = true
 				if err != nil {
@@ -497,7 +497,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 					return
 				}
 				mightValidate := resultPtr.Interface()
-				if canValidate, ok := mightValidate.(validation.CanValidate); ok {
+				if canValidate, ok := mightValidate.(validation.Validator); ok {
 					err = canValidate.Validate()
 					if err != nil {
 						// Validation error, abort struct construction.
@@ -596,7 +596,7 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 		return nil, fmt.Errorf("at %s, failed to setup `orMethod`\n\t * %w", fieldPath, err)
 	}
 
-	// Early check that we're not misusing CanValidate.
+	// Early check that we're not misusing Validator.
 	_, err = canInterface(fieldType, canValidateInterface)
 	if err != nil {
 		return nil, err
@@ -621,7 +621,7 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 				return
 			}
 			mightValidate := outPtr.Interface()
-			if canValidate, ok := mightValidate.(validation.CanValidate); ok {
+			if canValidate, ok := mightValidate.(validation.Validator); ok {
 				err = canValidate.Validate()
 				if err != nil {
 					// Validation error, abort struct construction.
@@ -779,7 +779,7 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, _ stati
 		return nil, fmt.Errorf("at %s, failed to build a parser:\n\t * %w", fieldPath, err)
 	}
 
-	// Early check that we're not misusing CanValidate.
+	// Early check that we're not misusing Validator.
 	_, err = canInterface(fieldType, canValidateInterface)
 	if err != nil {
 		return nil, err
@@ -814,7 +814,7 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, _ stati
 				return
 			}
 			mightValidate := outPtr.Interface()
-			if canValidate, ok := mightValidate.(validation.CanValidate); ok {
+			if canValidate, ok := mightValidate.(validation.Validator); ok {
 				err = canValidate.Validate()
 				if err != nil {
 					// Validation error, abort struct construction.

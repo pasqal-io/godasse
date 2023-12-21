@@ -56,7 +56,7 @@ type ValidatedStruct struct {
 	SomeEmail string
 }
 
-// Validate implements validation.CanValidate.
+// Validate implements validation.Validator.
 func (s *ValidatedStruct) Validate() error {
 	if strings.Contains(s.SomeEmail, "@") {
 		return nil
@@ -64,7 +64,7 @@ func (s *ValidatedStruct) Validate() error {
 	return fmt.Errorf("Invalid email")
 }
 
-var _ validation.CanValidate = &ValidatedStruct{} // Type assertion.
+var _ validation.Validator = &ValidatedStruct{} // Type assertion.
 
 func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output, error) {
 	deserializer, err := deserialize.MakeMapDeserializer[Output](deserialize.Options{})
@@ -119,14 +119,14 @@ func TestDeserializeMapBufAndString(t *testing.T) {
 	}
 
 	var result *PrimitiveTypesStruct
-	result, err = deserializer.DeserializeBytes(buf)
+	result, err = deserializer.DeserializeJSONBytes(buf)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	testutils.AssertEqual(t, *result, sample, "We should have succeeded when deserializing from bytes")
 
-	result, err = deserializer.DeserializeString(string(buf))
+	result, err = deserializer.DeserializeJSONString(string(buf))
 	if err != nil {
 		t.Error(err)
 		return
@@ -754,7 +754,7 @@ func (s *StructWithInitializer) Initialize() error {
 	return nil
 }
 
-var _ validation.CanInitialize = &StructWithInitializer{} // Type assertion.
+var _ validation.Initializer = &StructWithInitializer{} // Type assertion.
 
 // Test that we're correctly running pre-initialization at toplevel.
 func TestInitializer(t *testing.T) {
@@ -766,7 +766,7 @@ func TestInitializer(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	testutils.AssertEqual(t, *result, expected, "CanInitialize should have initialized our structure")
+	testutils.AssertEqual(t, *result, expected, "Initializer should have initialized our structure")
 }
 
 // Test that we're correctly running pre-initialization within another struct.
@@ -785,7 +785,7 @@ func TestInitializerNested(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	testutils.AssertEqual(t, *result, expected, "CanInitialize should have initialized our structure")
+	testutils.AssertEqual(t, *result, expected, "Initializer should have initialized our structure")
 }
 
 type StructInitializerFaulty struct {
@@ -821,13 +821,13 @@ func (s *StructInitializerFaulty) Initialize() error {
 	return fmt.Errorf("Test error")
 }
 
-var _ validation.CanInitialize = &StructInitializerFaulty{} // Type assertion.
+var _ validation.Initializer = &StructInitializerFaulty{} // Type assertion.
 
 // Test that we're correctly running pre-initialization at toplevel.
 func TestInitializerFaulty(t *testing.T) {
 	sample := EmptyStruct{}
 	_, err := twoWaysGeneric[EmptyStruct, StructInitializerFaulty](t, sample)
-	testutils.AssertEqual(t, err.Error(), "at StructInitializerFaulty, encountered an error while initializing optional fields:\n\t * Test error", "CanInitialize should have initialized our structure")
+	testutils.AssertEqual(t, err.Error(), "at StructInitializerFaulty, encountered an error while initializing optional fields:\n\t * Test error", "Initializer should have initialized our structure")
 }
 
 type StructUnmarshal struct {
@@ -872,7 +872,7 @@ func (BadValidateStruct) Validate() error { // Should be `func (BadValidateStruc
 	return nil
 }
 
-var _ validation.CanValidate = BadValidateStruct{}
+var _ validation.Validator = BadValidateStruct{}
 
 // A data structure that implements Initialize but forgets the pointer.
 type BadInitializeStruct struct{}
@@ -881,12 +881,12 @@ func (BadInitializeStruct) Initialize() error { // Should be `func (BadInitializ
 	return nil
 }
 
-var _ validation.CanInitialize = BadInitializeStruct{}
+var _ validation.Initializer = BadInitializeStruct{}
 
 func TestBadValidate(t *testing.T) {
 	_, err := deserialize.MakeMapDeserializer[BadValidateStruct](deserialize.Options{}) //nolint:exhaustruct
-	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadValidateStruct implements validation.CanValidate - it should be implemented by pointer type *deserialize_test.BadValidateStruct instead", "We should have detected that this struct does not implement CanValidate correctly")
+	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadValidateStruct implements validation.Validator - it should be implemented by pointer type *deserialize_test.BadValidateStruct instead", "We should have detected that this struct does not implement Validator correctly")
 
 	_, err = deserialize.MakeMapDeserializer[BadInitializeStruct](deserialize.Options{}) //nolint:exhaustruct
-	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadInitializeStruct implements validation.CanInitialize - it should be implemented by pointer type *deserialize_test.BadInitializeStruct instead", "We should have detected that this struct does not implement CanInitialize correctly")
+	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadInitializeStruct implements validation.Initializer - it should be implemented by pointer type *deserialize_test.BadInitializeStruct instead", "We should have detected that this struct does not implement Initializer correctly")
 }

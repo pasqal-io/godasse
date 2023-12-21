@@ -14,11 +14,11 @@ type ExamplePayload struct {
 	middle string
 }
 
-type ExampleCanInitialize struct {
+type ExampleInitializer struct {
 	payload *ExamplePayload
 }
 
-func (schema *ExampleCanInitialize) Initialize() error {
+func (schema *ExampleInitializer) Initialize() error {
 	schema.payload = &ExamplePayload{ //nolint:exhaustruct
 		left:  "left",
 		right: "right",
@@ -26,13 +26,13 @@ func (schema *ExampleCanInitialize) Initialize() error {
 	return nil
 }
 
-var _ validation.CanInitialize = &ExampleCanInitialize{} //nolint:exhaustruct
+var _ validation.Initializer = &ExampleInitializer{} //nolint:exhaustruct
 
 // A trivial test of initialization.
 //
 // See the tests for deserialize for more advanced checks.
 func TestInitialization(t *testing.T) {
-	result := ExampleCanInitialize{} //nolint:exhaustruct
+	result := ExampleInitializer{} //nolint:exhaustruct
 	err := result.Initialize()
 	if err != nil {
 		t.Error(err)
@@ -43,12 +43,12 @@ func TestInitialization(t *testing.T) {
 	testutils.AssertEqual(t, result.payload.middle, "", "Field middle should have been zeroed")
 }
 
-type ExampleCanValidate struct {
+type ExampleValidator struct {
 	Kind      string `json:"kind"`    // Public field, will be deserialized.
 	kindIndex uint   `initialized:""` // Private field, will e initialized by the validation step.
 }
 
-func (schema *ExampleCanValidate) Validate() error {
+func (schema *ExampleValidator) Validate() error {
 	switch schema.Kind {
 	case "zero":
 		schema.kindIndex = 0
@@ -63,14 +63,14 @@ func (schema *ExampleCanValidate) Validate() error {
 	return nil
 }
 
-var _ validation.CanValidate = &ExampleCanValidate{} //nolint:exhaustruct
+var _ validation.Validator = &ExampleValidator{} //nolint:exhaustruct
 
 // A trivial test of validation.
 //
 // See the tests for deserialize for more advanced checks.
 func TestValidation(t *testing.T) {
 	// This should pass validation.
-	good := ExampleCanValidate{ //nolint:exhaustruct
+	good := ExampleValidator{ //nolint:exhaustruct
 		Kind: "one",
 	}
 	err := good.Validate()
@@ -82,7 +82,7 @@ func TestValidation(t *testing.T) {
 	testutils.AssertEqual(t, good.kindIndex, 1, "Field kindIndex should have been set")
 
 	// This shouldn't.
-	bad := ExampleCanValidate{ //nolint:exhaustruct
+	bad := ExampleValidator{ //nolint:exhaustruct
 		Kind: "three",
 	}
 	err = bad.Validate()
