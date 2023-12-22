@@ -36,7 +36,7 @@ func (v Value) AsSlice() ([]shared.Value, bool) {
 	return nil, false
 }
 
-var _ shared.Value = Value{}
+var _ shared.Value = Value{} //nolint:exhaustruct
 
 func (list KVList) Lookup(key string) (shared.Value, bool) {
 	if val, ok := list[key]; ok {
@@ -111,4 +111,4 @@ func (u Driver) WrapValue(wrapped any) shared.Value {
 	}
 }
 
-var _ shared.Driver = Driver{} // Type assertion.
+var _ shared.Driver = Driver{} //nolint:exhaustruct

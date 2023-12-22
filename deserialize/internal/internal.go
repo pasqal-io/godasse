@@ -24,7 +24,7 @@ var _ shared.Value = EmptyValue{}
 type EmptyDict struct {
 }
 
-func (empty EmptyDict) Lookup(key string) (shared.Value, bool) {
+func (empty EmptyDict) Lookup(string) (shared.Value, bool) {
 	return EmptyValue{}, false
 }
 func (empty EmptyDict) AsValue() shared.Value {

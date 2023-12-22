@@ -4,19 +4,20 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/pasqal-io/godasse/assertions/initialized"
 )
 
 // A representation of the tags for a given field.
 type Tags struct {
-	tags    map[string]string
+	tags    map[string][]string
 	witness initialized.IsInitialized
 }
 
 func Empty() Tags {
 	return Tags{
-		tags:    make(map[string]string),
+		tags:    make(map[string][]string),
 		witness: initialized.Make(),
 	}
 }
@@ -24,7 +25,7 @@ func Empty() Tags {
 // Parse the tag associated to a struct field, according to the specs
 // of Go tags.
 func Parse(tag reflect.StructTag) (Tags, error) {
-	tags := make(map[string]string)
+	tags := make(map[string][]string)
 	// Copied and pasted from Go's type.go.
 	for tag != "" {
 		// Skip leading space.
@@ -50,6 +51,13 @@ func Parse(tag reflect.StructTag) (Tags, error) {
 			break
 		}
 		name := string(tag[:i])
+		if name == "" {
+			return Tags{}, fmt.Errorf("invalid tag with empty name")
+		}
+		if _, exists := tags[name]; exists {
+			return Tags{}, fmt.Errorf("invalid tag, name %s should only be defined once", name)
+		}
+
 		tag = tag[i+1:]
 
 		// Scan quoted string to find value.
@@ -66,10 +74,31 @@ func Parse(tag reflect.StructTag) (Tags, error) {
 		qvalue := string(tag[:i+1])
 		tag = tag[i+1:]
 
-		var err error
-		tags[name], err = strconv.Unquote(qvalue)
+		list, err := strconv.Unquote(qvalue)
 		if err != nil {
-			return Tags{}, fmt.Errorf("invalid tag %s:\n\t * %w", name, err)
+			return Tags{}, fmt.Errorf("ill-formed tag %s:\n\t * %w", name, err)
+		}
+
+		switch name {
+		case "default":
+			fallthrough
+		case "orMethod":
+			// don't pre-process
+			tags[name] = []string{list}
+		default:
+			split := strings.Split(list, ",")
+			trimmed := make([]string, 0)
+			for _, s := range split {
+				t := strings.Trim(s, " ")
+				if t != "" {
+					trimmed = append(trimmed, t)
+				}
+			}
+			// Make sure that we always have at least an empty string.
+			if len(trimmed) == 0 {
+				trimmed = append(trimmed, "")
+			}
+			tags[name] = trimmed
 		}
 	}
 	return Tags{
@@ -85,10 +114,11 @@ func Parse(tag reflect.StructTag) (Tags, error) {
 func (tags Tags) Default() *string {
 	tags.witness.Assert()
 	result, ok := tags.tags["default"]
-	if ok {
-		return &result
+	if !ok || len(result) == 0 {
+		return nil
 	}
-	return nil
+
+	return &result[0]
 }
 
 // Return the name of a method that may be used to initialize
@@ -98,10 +128,10 @@ func (tags Tags) Default() *string {
 func (tags Tags) MethodName() *string {
 	tags.witness.Assert()
 	result, ok := tags.tags["orMethod"]
-	if ok {
-		return &result
+	if !ok || len(result) == 0 {
+		return nil
 	}
-	return nil
+	return &result[0]
 }
 
 // Return the public field name for a field.
@@ -111,10 +141,10 @@ func (tags Tags) MethodName() *string {
 func (tags Tags) PublicFieldName(key string) *string {
 	tags.witness.Assert()
 	result, ok := tags.tags[key]
-	if ok {
-		return &result
+	if !ok || len(result) == 0 {
+		return nil
 	}
-	return nil
+	return &result[0]
 }
 
 // Return `true` if this field should be considered pre-initialized
@@ -128,4 +158,10 @@ func (tags Tags) IsPreinitialized() bool {
 	tags.witness.Assert()
 	_, ok := tags.tags["initialized"]
 	return ok
+}
+
+// Lookup a key.
+func (tags Tags) Lookup(key string) ([]string, bool) {
+	result, ok := tags.tags[key]
+	return result, ok
 }

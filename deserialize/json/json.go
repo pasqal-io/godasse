@@ -46,11 +46,11 @@ func (v Value) Interface() any {
 	return v.wrapped
 }
 
-var _ shared.Value = Value{}
+var _ shared.Value = Value{} //nolint:exhaustruct
 
 func (json JSON) Lookup(key string) (shared.Value, bool) {
 	if val, ok := json[key]; ok {
-		var value Value = Value{
+		value := Value{
 			wrapped: val,
 		}
 		return value, true
@@ -63,7 +63,7 @@ func (json JSON) AsValue() shared.Value {
 	}
 }
 
-var _ shared.Dict = JSON{}
+var _ shared.Dict = JSON{} //nolint:exhaustruct
 
 // The type of a JSON/Dictionary.
 var dictionary = reflect.TypeOf(make(JSON, 0))

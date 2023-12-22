@@ -571,7 +571,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 				outPtr.Set(reflected)
 				return nil
 			default:
-				err = fmt.Errorf("missing value at %s, expected %s", path, typeName(typ))
+				err = fmt.Errorf("missing object value at %s, expected %s", path, typeName(typ))
 				return err
 			}
 

@@ -22,9 +22,9 @@ func AssertEqual[T comparable](t *testing.T, actual, expected T, explanation str
 }
 func AssertEqualArrays[T comparable](t *testing.T, actual, expected []T, explanation string) {
 	t.Helper()
-	AssertEqual(t, len(actual), len(expected), explanation)
+	AssertEqual(t, len(actual), len(expected), fmt.Sprintf("%s - invalid length", explanation))
 	for i := 0; i < len(actual); i++ {
-		AssertEqual(t, actual[i], expected[i], explanation)
+		AssertEqual(t, actual[i], expected[i], fmt.Sprintf("%s - invalid item %d", explanation, i))
 	}
 }
 

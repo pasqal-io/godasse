@@ -24,7 +24,6 @@ linters:
     - gosmopolitan
     - govet
     - mirror
-    - nolintlint
     - nosprintfhostport
     - perfsprint
     - prealloc
@@ -35,7 +34,6 @@ linters:
     - revive
     - sloglint
     - sqlclosecheck
-    - staticcheck
     - tagliatelle
     - tenv
     - testableexamples
@@ -47,6 +45,8 @@ linters:
     - unused
     - usestdlibvars
     - wrapcheck
+  disable:
+    - staticcheck # already built into Go
 
 linters-settings:
   exhaustive:
