@@ -339,8 +339,8 @@ type reflectDeserializer func(slot *reflect.Value, data shared.Value) error
 
 // The interface `validation.Initializer`, which we use throughout the code
 // to pre-initialize structs.
-var canInitializeInterface = reflect.TypeOf((*validation.Initializer)(nil)).Elem()
-var canValidateInterface = reflect.TypeOf((*validation.Validator)(nil)).Elem()
+var initializerInterface = reflect.TypeOf((*validation.Initializer)(nil)).Elem()
+var validatorInterface = reflect.TypeOf((*validation.Validator)(nil)).Elem()
 
 // The interface `error`.
 var errorInterface = reflect.TypeOf((*error)(nil)).Elem()
@@ -363,7 +363,7 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 
 	// Pre-check if we're going to perform initialization.
 	typ := reflect.TypeOf(*container)
-	shouldPreinitialize, err := canInterface(typ, canInitializeInterface)
+	shouldPreinitialize, err := canInterface(typ, initializerInterface)
 	if err != nil {
 		return nil, err
 	}
@@ -416,205 +416,330 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 //
 //   - `path` the human-readable path into the data structure, used for error-reporting;
 //   - `typ` the dynamic type for the struct being compiled;
-//   - `tagName` the name of tags to use for field renamings, e.g. `query`;
 //   - `tags` the table of tags for this field.
+//   - `wasPreinitialized` if this value was preinitialized, typically through `Initializer`
 func makeStructDeserializerFromReflect(path string, typ reflect.Type, options staticOptions, tags *tagsPkg.Tags, container reflect.Value, wasPreInitialized bool) (reflectDeserializer, error) {
-	switch typ.Kind() {
-	case reflect.Struct:
-		selfContainer := reflect.New(typ)
-		deserializers := make(map[string]func(outPtr *reflect.Value, inMap shared.Dict) error)
+	if typ.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("invalid call to StructDeserializer: %s is not a struct", path))
+	}
+	selfContainer := reflect.New(typ)
+	deserializers := make(map[string]func(outPtr *reflect.Value, inMap shared.Dict) error)
 
-		// If this structure supports self-initialization or custom unmarshaling, we don't need (or use)
-		// default fields and `orMethod` constructors.
-		canInitializeSelf, err := canInterface(typ, canInitializeInterface)
+	initializationData, err := initializationData(path, typ, options)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		fieldType := field.Type
+		tags, err := tagsPkg.Parse(field.Tag)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse tags at %s.%s:\n\t * %w", path, field.Name, err)
+		}
+		fieldNativeName := field.Name
+		fieldNativeExported := field.IsExported()
+
+		// Extract the public field name (that's the content of `json:"XXX"` if we're deserializing JSON).
+		// We'll use for deserialization and also for error messages, as we expect that the errors will
+		// be readable by external users.
+		publicFieldName := tags.PublicFieldName(options.renamingTagName)
+		if publicFieldName == nil {
+			publicFieldName = &fieldNativeName
+		}
+
+		hasDefault := tags.Default() != nil
+		hasConstructionMethod := tags.MethodName() != nil
+
+		if hasDefault && hasConstructionMethod {
+			return nil, fmt.Errorf("struct %s contains a field \"%s\" that has both a `default` and a `orMethod` declaration. Please specify only one", path, fieldNativeName)
+		}
+
+		// By Go convention, a field with lower-case name or with a publicFieldName of "-" is private and
+		// should not be parsed.
+		isPublic := (*publicFieldName != "-") && fieldNativeExported
+		if !isPublic && !initializationData.willPreinitialize {
+			return nil, fmt.Errorf("struct %s contains a field \"%s\" that is not public, you should either make it public or specify an initializer with `Initializer` or `UnmarshalJSON`", path, fieldNativeName)
+		}
+
+		fieldPath := fmt.Sprint(path, ".", *publicFieldName)
+
+		var fieldContentDeserializer reflectDeserializer
+		fieldContentDeserializer, err = makeFieldDeserializerFromReflect(fieldPath, fieldType, options, &tags, selfContainer, initializationData.willPreinitialize)
 		if err != nil {
 			return nil, err
 		}
-		canUnmarshalSelf := options.unmarshaler.ShouldUnmarshal(typ)
-		if canInitializeSelf && canUnmarshalSelf {
-			slog.Warn("At %s, type %s supports both Initializer and Unmarshaler, defaulting to Unmarshaler")
-			canInitializeSelf = false
-		}
-		willPreinitialize := canInitializeSelf || canUnmarshalSelf
+		fieldDeserializer := func(outPtr *reflect.Value, inMap shared.Dict) error {
+			// Note: maps are references, so there is no loss to passing a `map` instead of a `*map`.
+			// Use the `fieldName` to access the field in the record.
+			outReflect := outPtr.FieldByName(fieldNativeName)
 
-		// Early check that we're not mis-using `Validator`.
-		_, err = canInterface(typ, canValidateInterface)
-		if err != nil {
-			return nil, err
-		}
-
-		for i := 0; i < typ.NumField(); i++ {
-			field := typ.Field(i)
-			fieldType := field.Type
-			tags, err := tagsPkg.Parse(field.Tag)
+			// Use the `publicFieldName` to access the field in the map.
+			var fieldValue shared.Value
+			if isPublic {
+				// If the field is public, we can accept external data, if provided.
+				var ok bool
+				fieldValue, ok = inMap.Lookup(*publicFieldName)
+				if !ok {
+					fieldValue = nil
+				}
+			}
+			err := fieldContentDeserializer(&outReflect, fieldValue)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse tags at %s.%s:\n\t * %w", path, field.Name, err)
-			}
-			fieldNativeName := field.Name
-			fieldNativeExported := field.IsExported()
-
-			// Extract the public field name (that's the content of `json:"XXX"` if we're deserializing JSON).
-			// We'll use for deserialization and also for error messages, as we expect that the errors will
-			// be readable by external users.
-			publicFieldName := tags.PublicFieldName(options.renamingTagName)
-			if publicFieldName == nil {
-				publicFieldName = &fieldNativeName
-			}
-
-			hasDefault := tags.Default() != nil
-			hasConstructionMethod := tags.MethodName() != nil
-
-			if hasDefault && hasConstructionMethod {
-				return nil, fmt.Errorf("struct %s contains a field \"%s\" that has both a `default` and a `orMethod` declaration. Please specify only one", path, fieldNativeName)
-			}
-
-			// By Go convention, a field with lower-case name or with a publicFieldName of "-" is private and
-			// should not be parsed.
-			isPublic := (*publicFieldName != "-") && fieldNativeExported
-			if !isPublic && !willPreinitialize {
-				return nil, fmt.Errorf("struct %s contains a field \"%s\" that is not public, you should either make it public or specify an initializer with `Initializer` or `UnmarshalJSON`", path, fieldNativeName)
-			}
-
-			fieldPath := fmt.Sprint(path, ".", *publicFieldName)
-
-			var fieldContentDeserializer reflectDeserializer
-			fieldContentDeserializer, err = makeFieldDeserializerFromReflect(fieldPath, fieldType, options, &tags, selfContainer, willPreinitialize)
-			if err != nil {
-				return nil, err
-			}
-			fieldDeserializer := func(outPtr *reflect.Value, inMap shared.Dict) error {
-				// Note: maps are references, so there is no loss to passing a `map` instead of a `*map`.
-				// Use the `fieldName` to access the field in the record.
-				outReflect := outPtr.FieldByName(fieldNativeName)
-
-				// Use the `publicFieldName` to access the field in the map.
-				var fieldValue shared.Value
-				if isPublic {
-					// If the field is public, we can accept external data, if provided.
-					var ok bool
-					fieldValue, ok = inMap.Lookup(*publicFieldName)
-					if !ok {
-						fieldValue = nil
-					}
-				}
-				err := fieldContentDeserializer(&outReflect, fieldValue)
-				if err != nil {
-					return err
-				}
-
-				// At this stage, the field has already been validated by using `Validator.Validate()`.
-				// In future versions, we may wish to add support for further validation using tags.
-				return nil
-			}
-
-			deserializers[field.Name] = fieldDeserializer
-		}
-
-		// True if this struct has a default value of {}.
-		isZeroDefault := false
-		if defaultSource := tags.Default(); defaultSource != nil {
-			if *defaultSource == "{}" {
-				isZeroDefault = true
-			} else {
-				return nil, fmt.Errorf("at %s, invalid `default` value. The only supported `default` value for structs is \"{}\", got: %s", path, *defaultSource)
-			}
-		}
-		orMethod, err := makeOrMethodConstructor(tags, typ, container)
-		if err != nil {
-			return nil, fmt.Errorf("at %s, failed to setup `orMethod`\n\t * %w", path, err)
-		}
-
-		result := func(outPtr *reflect.Value, inValue shared.Value) (err error) {
-			resultPtr := reflect.New(typ)
-			result := resultPtr.Elem()
-
-			// If possible, perform pre-initialization with default values.
-			if initializer, ok := resultPtr.Interface().(validation.Initializer); ok {
-				err = initializer.Initialize()
-				wasPreInitialized = true
-				if err != nil {
-					err = fmt.Errorf("at %s, encountered an error while initializing optional fields:\n\t * %w", path, err)
-					slog.Error("Internal error during deserialization", "error", err)
-					return err
-				}
-			}
-
-			// Don't forget to perform validation (unless we're returning an error).
-			defer func() {
-				if err != nil {
-					// We're already returning an error, no need to insist.
-					return
-				}
-				mightValidate := resultPtr.Interface()
-				if canValidate, ok := mightValidate.(validation.Validator); ok {
-					err = canValidate.Validate()
-					if err != nil {
-						// Validation error, abort struct construction.
-						err = fmt.Errorf("deserialized value %s did not pass validation\n\t * %w", path, err)
-						result = reflect.Zero(typ)
-					}
-				}
-			}()
-			switch {
-			case inValue != nil:
-				// We have all the data we need, proceed.
-			case isZeroDefault || wasPreInitialized:
-				inValue = internal.EmptyValue{}
-			case orMethod != nil:
-				constructed, err := (*orMethod)()
-				if err != nil {
-					err = fmt.Errorf("error in optional value at %s\n\t * %w", path, err)
-					slog.Error("Internal error during deserialization", "error", err)
-					return err
-				}
-				reflected := reflect.ValueOf(constructed)
-				outPtr.Set(reflected)
-				return nil
-			default:
-				err = fmt.Errorf("missing object value at %s, expected %s", path, typeName(typ))
 				return err
 			}
 
-			if canUnmarshalSelf {
-				// Our struct supports `Unmarshaler`. This means that:
-				//
-				// - it enforces its own invariants (we do not perform pre-initialization or in-depth validation);
-				// - from the point of view of the outside world, this MUST be a string.
-				inString, ok := inValue.Interface().(string)
-				if !ok {
-					err = fmt.Errorf("invalid value at %s, expected a string holding a %s, got %s", path, typeName(typ), inValue)
-					return err
-				}
-				resultPtrAny := resultPtr.Interface()
-				err = options.unmarshaler.Unmarshal([]byte(inString), &resultPtrAny)
-				if err != nil {
-					err = fmt.Errorf("invalid string at %s, expected to be able to parse a %s:\n\t * %w", path, typeName(typ), err)
-					return err
-				}
-			} else {
-				// Our `any` should be a dictionary.
-				inMap, ok := inValue.AsDict()
-				if !ok {
-					err = fmt.Errorf("invalid value at %s, expected an object of type %s, got %s", path, typeName(typ), result.Type().Name())
-					return err
-				}
-
-				// We may now deserialize fields.
-				for _, fieldDeserializationData := range deserializers {
-					err = fieldDeserializationData(&result, inMap)
-					if err != nil {
-						return err
-					}
-				}
-			}
-
-			outPtr.Set(result)
+			// At this stage, the field has already been validated by using `Validator.Validate()`.
+			// In future versions, we may wish to add support for further validation using tags.
 			return nil
 		}
-		return result, nil
-	default:
-		return nil, fmt.Errorf("invalid call to StructDeserializer: %s is not a struct", path)
+
+		deserializers[field.Name] = fieldDeserializer
 	}
+
+	// True if this struct has a default value of {}.
+	isZeroDefault := false
+	if defaultSource := tags.Default(); defaultSource != nil {
+		if *defaultSource == "{}" {
+			isZeroDefault = true
+		} else {
+			return nil, fmt.Errorf("at %s, invalid `default` value. The only supported `default` value for structs is \"{}\", got: %s", path, *defaultSource)
+		}
+	}
+	orMethod, err := makeOrMethodConstructor(tags, typ, container)
+	if err != nil {
+		return nil, fmt.Errorf("at %s, failed to setup `orMethod`\n\t * %w", path, err)
+	}
+
+	result := func(outPtr *reflect.Value, inValue shared.Value) (err error) {
+		resultPtr := reflect.New(typ)
+		result := resultPtr.Elem()
+
+		// If possible, perform pre-initialization with default values.
+		if initializer, ok := resultPtr.Interface().(validation.Initializer); ok {
+			err = initializer.Initialize()
+			wasPreInitialized = true
+			if err != nil {
+				err = fmt.Errorf("at %s, encountered an error while initializing optional fields:\n\t * %w", path, err)
+				slog.Error("Internal error during deserialization", "error", err)
+				return err
+			}
+		}
+
+		// Don't forget to perform validation (unless we're returning an error).
+		defer func() {
+			if err != nil {
+				// We're already returning an error, no need to insist.
+				return
+			}
+			mightValidate := resultPtr.Interface()
+			if validator, ok := mightValidate.(validation.Validator); ok {
+				err = validator.Validate()
+				if err != nil {
+					// Validation error, abort struct construction.
+					err = fmt.Errorf("deserialized value %s did not pass validation\n\t * %w", path, err)
+					result = reflect.Zero(typ)
+				}
+			}
+		}()
+		switch {
+		case inValue != nil:
+			// We have all the data we need, proceed.
+		case isZeroDefault || wasPreInitialized:
+			inValue = internal.EmptyValue{}
+		case orMethod != nil:
+			constructed, err := (*orMethod)()
+			if err != nil {
+				err = fmt.Errorf("error in optional value at %s\n\t * %w", path, err)
+				slog.Error("Internal error during deserialization", "error", err)
+				return err
+			}
+			reflected := reflect.ValueOf(constructed)
+			outPtr.Set(reflected)
+			return nil
+		default:
+			err = fmt.Errorf("missing object value at %s, expected %s", path, typeName(typ))
+			return err
+		}
+
+		if initializationData.canUnmarshalSelf {
+			// Our struct supports `Unmarshaler`. This means that:
+			//
+			// - it enforces its own invariants (we do not perform pre-initialization or in-depth validation);
+			// - from the point of view of the outside world, this MUST be a string.
+			inString, ok := inValue.Interface().(string)
+			if !ok {
+				err = fmt.Errorf("invalid value at %s, expected a string holding a %s, got %s", path, typeName(typ), inValue)
+				return err
+			}
+			resultPtrAny := resultPtr.Interface()
+			err = options.unmarshaler.Unmarshal([]byte(inString), &resultPtrAny)
+			if err != nil {
+				err = fmt.Errorf("invalid string at %s, expected to be able to parse a %s:\n\t * %w", path, typeName(typ), err)
+				return err
+			}
+		} else {
+			inMap, ok := inValue.AsDict()
+			if !ok {
+				err = fmt.Errorf("invalid value at %s, expected an object of type %s, got %s", path, typeName(typ), result.Type().Name())
+				return err
+			}
+
+			// We may now deserialize fields.
+			for _, fieldDeserializationData := range deserializers {
+				err = fieldDeserializationData(&result, inMap)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		outPtr.Set(result)
+		return nil
+	}
+	return result, nil
+}
+
+// Construct a dynamically-typed deserializer for maps.
+//
+//   - `path` the human-readable path into the data structure, used for error-reporting;
+//   - `typ` the dynamic type for the struct being compiled;
+//   - `tags` the table of tags for this field.
+//   - `wasPreinitialized` if this value was preinitialized, typically through `Initializer`
+func makeMapDeserializerFromReflect(path string, typ reflect.Type, options staticOptions, tags *tagsPkg.Tags, container reflect.Value, wasPreInitialized bool) (reflectDeserializer, error) {
+	if typ.Kind() != reflect.Map {
+		panic(fmt.Sprintf("invalid call: %s is not a map", path))
+	}
+	if typ.Key().Kind() != reflect.String {
+		return nil, fmt.Errorf("invalid map type at %s, only map[string]T can be converted into a deserializer", path)
+	}
+
+	// From this point, we know that it's a `map[string]T` for some `T`.
+	selfContainer := reflect.New(typ)
+
+	initializationMetadata, err := initializationData(path, typ, options)
+	if err != nil {
+		return nil, err
+	}
+
+	subPath := fmt.Sprintf("%s[]", path)
+	subTags := tagsPkg.Empty()
+	subTyp := typ.Elem()
+	contentDeserializer, err := makeFieldDeserializerFromReflect(subPath, subTyp, options, &subTags, selfContainer, initializationMetadata.willPreinitialize)
+	if err != nil {
+		return nil, err
+	}
+
+	// True if this map has a default value of {}.
+	isZeroDefault := false
+	if defaultSource := tags.Default(); defaultSource != nil {
+		if *defaultSource == "{}" {
+			isZeroDefault = true
+		} else {
+			return nil, fmt.Errorf("at %s, invalid `default` value. The only supported `default` value for maps is \"{}\", got: %s", path, *defaultSource)
+		}
+	}
+	orMethod, err := makeOrMethodConstructor(tags, typ, container)
+	if err != nil {
+		return nil, fmt.Errorf("at %s, failed to setup `orMethod`\n\t * %w", path, err)
+	}
+
+	result := func(outPtr *reflect.Value, inValue shared.Value) (err error) {
+		result := reflect.MakeMap(typ)
+
+		// If possible, perform pre-initialization with default values.
+		if initializer, ok := result.Interface().(validation.Initializer); ok {
+			err = initializer.Initialize()
+			wasPreInitialized = true
+			if err != nil {
+				err = fmt.Errorf("at %s, encountered an error while initializing optional object:\n\t * %w", path, err)
+				slog.Error("Internal error during deserialization", "error", err)
+				return err
+			}
+		}
+
+		// Don't forget to perform validation (unless we're returning an error).
+		defer func() {
+			if err != nil {
+				// We're already returning an error, no need to insist.
+				return
+			}
+			mightValidate := result.Interface()
+			if validator, ok := mightValidate.(validation.Validator); ok {
+				err = validator.Validate()
+				if err != nil {
+					// Validation error, abort struct construction.
+					err = fmt.Errorf("deserialized value %s did not pass validation\n\t * %w", path, err)
+					result = reflect.Zero(typ)
+				}
+			}
+		}()
+		print("TEST")
+		switch {
+		case inValue != nil:
+			// We have all the data we need, proceed.
+		case isZeroDefault || wasPreInitialized:
+			inValue = internal.EmptyDict{}.AsValue()
+		case orMethod != nil:
+			constructed, err := (*orMethod)()
+			if err != nil {
+				err = fmt.Errorf("error in optional object at %s\n\t * %w", path, err)
+				slog.Error("Internal error during deserialization", "error", err)
+				return err
+			}
+			reflected := reflect.ValueOf(constructed)
+			outPtr.Set(reflected)
+			return nil
+		default:
+			err = fmt.Errorf("missing object value at %s, expected %s", path, typeName(typ))
+			return err
+		}
+
+		if initializationMetadata.canUnmarshalSelf {
+			// Our struct supports `Unmarshaler`. This means that:
+			//
+			// - it enforces its own invariants (we do not perform pre-initialization or in-depth validation);
+			// - from the point of view of the outside world, this MUST be a string.
+			inString, ok := inValue.Interface().(string)
+			if !ok {
+				err = fmt.Errorf("invalid value at %s, expected a string holding a %s, got %s", path, typeName(typ), inValue)
+				return err
+			}
+			resultPtrAny := result.Interface()
+			err = options.unmarshaler.Unmarshal([]byte(inString), &resultPtrAny)
+			if err != nil {
+				err = fmt.Errorf("invalid string at %s, expected to be able to parse a %s:\n\t * %w", path, typeName(typ), err)
+				return err
+			}
+		} else {
+			inMap, ok := inValue.AsDict()
+			if !ok {
+				err = fmt.Errorf("invalid value at %s, expected an object of type %s, got %v", path, typeName(typ), inValue.Interface())
+				return err
+			}
+
+			// We may now deserialize keys and values.
+			keys := inMap.Keys()
+			for _, k := range keys {
+				subInValue, ok := inMap.Lookup(k)
+				if !ok {
+					slog.Error("Internal error while ranging over map: missing value", "path", path, "key", k)
+					continue
+				}
+
+				reflectedContent := reflect.New(subTyp).Elem()
+				err = contentDeserializer(&reflectedContent, subInValue)
+				if err != nil {
+					return err
+				}
+				result.SetMapIndex(reflect.ValueOf(k), reflectedContent)
+			}
+		}
+
+		outPtr.Set(result)
+		return nil
+	}
+	return result, nil
 }
 
 // Construct a dynamically-typed deserializer for slices.
@@ -639,7 +764,7 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 	}
 
 	// Early check that we're not misusing Validator.
-	_, err = canInterface(fieldType, canValidateInterface)
+	_, err = canInterface(fieldType, validatorInterface)
 	if err != nil {
 		return nil, err
 	}
@@ -663,8 +788,8 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 				return
 			}
 			mightValidate := outPtr.Interface()
-			if canValidate, ok := mightValidate.(validation.Validator); ok {
-				err = canValidate.Validate()
+			if validator, ok := mightValidate.(validation.Validator); ok {
+				err = validator.Validate()
 				if err != nil {
 					// Validation error, abort struct construction.
 					err = fmt.Errorf("deserialized value %s did not pass validation\n\t * %w", fieldPath, err)
@@ -804,7 +929,7 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 	}
 
 	// Early check that we're not misusing Validator.
-	_, err = canInterface(fieldType, canValidateInterface)
+	_, err = canInterface(fieldType, validatorInterface)
 	if err != nil {
 		return nil, err
 	}
@@ -838,8 +963,8 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 				return
 			}
 			mightValidate := outPtr.Interface()
-			if canValidate, ok := mightValidate.(validation.Validator); ok {
-				err = canValidate.Validate()
+			if validator, ok := mightValidate.(validation.Validator); ok {
+				err = validator.Validate()
 				if err != nil {
 					// Validation error, abort struct construction.
 					err = fmt.Errorf("deserialized value %s did not pass validation\n\t * %w", fieldPath, err)
@@ -928,6 +1053,12 @@ func makeFieldDeserializerFromReflect(fieldPath string, fieldType reflect.Type, 
 			result, err = makeStructDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
 			return nil, fmt.Errorf("this type of extractor does not support nested structs")
+		}
+	case reflect.Map:
+		if options.allowNested {
+			result, err = makeMapDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+		} else {
+			return nil, fmt.Errorf("this type of extractor does not support nested maps")
 		}
 	default:
 		// If it's not a struct, an array, a slice or a pointer, well, it's probably something flat.
@@ -1087,6 +1218,7 @@ func makeOrMethodConstructor(tags *tagsPkg.Tags, fieldType reflect.Type, contain
 	return defaultMethodConstructor, nil
 }
 
+// Check that a type implements an interface *on pointers*.
 func canInterface(typ reflect.Type, interfaceType reflect.Type) (bool, error) {
 	ptrTyp := reflect.PointerTo(typ)
 	if typ.Implements(interfaceType) {
@@ -1096,4 +1228,39 @@ func canInterface(typ reflect.Type, interfaceType reflect.Type) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// Some metadata on initialization for a type.
+type initializationMetadata struct {
+	canInitializeSelf bool
+	canUnmarshalSelf  bool
+	willPreinitialize bool
+}
+
+func initializationData(path string, typ reflect.Type, options staticOptions) (initializationMetadata, error) {
+	// If this structure supports self-initialization or custom unmarshaling, we don't need (or use)
+	// default fields and `orMethod` constructors.
+	canInitializeSelf, err := canInterface(typ, initializerInterface)
+	if err != nil {
+		return initializationMetadata{}, err
+	}
+
+	canUnmarshalSelf := options.unmarshaler.ShouldUnmarshal(typ)
+	if canInitializeSelf && canUnmarshalSelf {
+		slog.Warn("Type supports both Initializer and Unmarshaler, defaulting to Unmarshaler", "path", path, "type", typ)
+		canInitializeSelf = false
+	}
+	willPreinitialize := canInitializeSelf || canUnmarshalSelf
+
+	// Early check that we're not mis-using `Validator`.
+	_, err = canInterface(typ, validatorInterface)
+	if err != nil {
+		return initializationMetadata{}, err
+	}
+
+	return initializationMetadata{
+		canInitializeSelf: canInitializeSelf,
+		canUnmarshalSelf:  canUnmarshalSelf,
+		willPreinitialize: willPreinitialize,
+	}, nil
 }

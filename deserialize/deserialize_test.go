@@ -889,10 +889,59 @@ func (BadInitializeStruct) Initialize() error { // Should be `func (BadInitializ
 
 var _ validation.Initializer = BadInitializeStruct{}
 
+// Test that we can detect bad implementations of `Validator` or `Initializer` that do not
+// work on pointers.
 func TestBadValidate(t *testing.T) {
 	_, err := deserialize.MakeMapDeserializer[BadValidateStruct](deserialize.JSONOptions("")) //nolint:exhaustruct
 	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadValidateStruct implements validation.Validator - it should be implemented by pointer type *deserialize_test.BadValidateStruct instead", "We should have detected that this struct does not implement Validator correctly")
 
 	_, err = deserialize.MakeMapDeserializer[BadInitializeStruct](deserialize.JSONOptions("")) //nolint:exhaustruct
 	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadInitializeStruct implements validation.Initializer - it should be implemented by pointer type *deserialize_test.BadInitializeStruct instead", "We should have detected that this struct does not implement Initializer correctly")
+}
+
+type StructMap[T any] struct {
+	RegularMap  map[string]T
+	DefaultMap  map[string]T `default:"{}"`
+	OrMethodMap map[string]T `orMethod:"SetupMap"`
+}
+
+func (StructMap[T]) SetupMap() (map[string]T, error) {
+	result := make(map[string]T)
+	return result, nil
+}
+
+func TestMap(t *testing.T) {
+	type SimpleStructWithDefault struct {
+		SomeString string `default:"default value"`
+	}
+
+	_, err := twoWaysGeneric[EmptyStruct, StructMap[SimpleStructWithDefault]](t, EmptyStruct{})
+	re := regexp.MustCompile("missing object value at StructMap.*")
+	testutils.AssertRegexp(t, err.Error(), *re, "We should have failed because the map is missing a default or a value")
+
+	sampleMap := map[string]int{"zero": 0, "one": 1, "two": 2}
+	expected := StructMap[int]{
+		RegularMap:  sampleMap,
+		DefaultMap:  map[string]int{},
+		OrMethodMap: map[string]int{},
+	}
+	extracted, err := twoWaysGeneric[StructMap[int], StructMap[int]](t, StructMap[int]{
+		RegularMap: sampleMap,
+	})
+	if err != nil {
+		t.Error(err)
+
+		return
+	}
+	testutils.AssertDeepEqual(t, *extracted, expected, "We should have deserialized the maps correctly")
+}
+
+func TestBadMapMap(t *testing.T) {
+	type BadMap struct {
+		Field map[int]string
+	}
+
+	_, err := deserialize.MakeMapDeserializer[BadMap](deserialize.JSONOptions(""))
+	re := regexp.MustCompile(`invalid map type at BadMap\.Field, only map\[string\]T can be converted into a deserializer`)
+	testutils.AssertRegexp(t, err.Error(), *re, "We should have detected that we cannot convert maps with such keys")
 }

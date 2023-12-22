@@ -51,6 +51,13 @@ func (list KVList) AsValue() shared.Value {
 		wrapped: list,
 	}
 }
+func (list KVList) Keys() []string {
+	keys := make([]string, 0)
+	for k := range list {
+		keys = append(keys, k)
+	}
+	return keys
+}
 
 var _ shared.Dict = make(KVList, 0)
 

@@ -21,6 +21,7 @@ type Value interface {
 type Dict interface {
 	Lookup(key string) (Value, bool)
 	AsValue() Value
+	Keys() []string
 }
 
 // A driver for a specific type of deserialization.

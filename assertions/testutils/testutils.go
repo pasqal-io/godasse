@@ -20,6 +20,14 @@ func AssertEqual[T comparable](t *testing.T, actual, expected T, explanation str
 		}
 	}
 }
+
+func AssertDeepEqual[T any](t *testing.T, actual, expected T, explanation string) {
+	t.Helper()
+	if !reflect.DeepEqual(actual, expected) {
+		t.Errorf("got: %+v; want: %+v (%s)", actual, expected, explanation)
+	}
+}
+
 func AssertEqualArrays[T comparable](t *testing.T, actual, expected []T, explanation string) {
 	t.Helper()
 	AssertEqual(t, len(actual), len(expected), fmt.Sprintf("%s - invalid length", explanation))

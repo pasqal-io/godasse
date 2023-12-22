@@ -28,6 +28,9 @@ func (v Value) AsDict() (shared.Dict, bool) {
 	case map[string]any:
 		var json JSON = t
 		return json, true
+	case nil:
+		var json JSON = map[string]any{}
+		return json, true
 	default:
 		return nil, false
 	}
@@ -61,6 +64,13 @@ func (json JSON) AsValue() shared.Value {
 	return Value{
 		wrapped: json,
 	}
+}
+func (json JSON) Keys() []string {
+	keys := make([]string, 0)
+	for k := range json {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 var _ shared.Dict = JSON{} //nolint:exhaustruct

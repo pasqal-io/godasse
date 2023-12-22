@@ -30,5 +30,8 @@ func (empty EmptyDict) Lookup(string) (shared.Value, bool) {
 func (empty EmptyDict) AsValue() shared.Value {
 	return EmptyValue{}
 }
+func (empty EmptyDict) Keys() []string {
+	return []string{}
+}
 
 var _ shared.Dict = EmptyDict{}
