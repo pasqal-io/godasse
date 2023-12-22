@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/pasqal-io/godasse/assertions/testutils"
 	"github.com/pasqal-io/godasse/deserialize/tags"
+	"gotest.tools/v3/assert"
 )
 
 type RandomStruct struct {
@@ -33,7 +33,7 @@ func TestReadTags(t *testing.T) {
 
 		return
 	}
-	testutils.AssertEqualArrays(t, first, []string{"1", "2", "3"}, "Invalid content for non-trivial list")
+	assert.DeepEqual(t, first, []string{"1", "2", "3"})
 
 	second, ok := parsed.Lookup("second")
 	if !ok {
@@ -41,7 +41,7 @@ func TestReadTags(t *testing.T) {
 
 		return
 	}
-	testutils.AssertEqualArrays(t, second, []string{""}, "Invalid content for empty list")
+	assert.DeepEqual(t, second, []string{""})
 
 	third, ok := parsed.Lookup("third")
 	if !ok {
@@ -49,7 +49,7 @@ func TestReadTags(t *testing.T) {
 
 		return
 	}
-	testutils.AssertEqualArrays(t, third, []string{"abc"}, "Invalid content for one element")
+	assert.DeepEqual(t, third, []string{"abc"})
 
 	fourth, ok := parsed.Lookup("fourth")
 	if !ok {
@@ -57,7 +57,7 @@ func TestReadTags(t *testing.T) {
 
 		return
 	}
-	testutils.AssertEqualArrays(t, fourth, []string{"1", "2", "3"}, "Invalid content for non-trivial list with trimming")
+	assert.DeepEqual(t, fourth, []string{"1", "2", "3"})
 
 	fifth, ok := parsed.Lookup("fifth")
 	if !ok {
@@ -65,7 +65,7 @@ func TestReadTags(t *testing.T) {
 
 		return
 	}
-	testutils.AssertEqualArrays(t, fifth, []string{"abc"}, "Invalid content for one element with trimming")
+	assert.DeepEqual(t, fifth, []string{"abc"})
 
 	_, ok = parsed.Lookup("absent")
 	if ok {
@@ -94,7 +94,7 @@ func TestDefaultString(t *testing.T) {
 	}
 
 	defaultValue := parsed.Default()
-	testutils.AssertEqual(t, *defaultValue, "", "Should return a default tag")
+	assert.Equal(t, *defaultValue, "", "Should return a default tag")
 }
 
 func TestDefaultNil(t *testing.T) {
@@ -108,7 +108,7 @@ func TestDefaultNil(t *testing.T) {
 	}
 
 	defaultValue := parsed.Default()
-	testutils.AssertEqual(t, *defaultValue, "nil", "Should return a default tag")
+	assert.Equal(t, *defaultValue, "nil", "Should return a default tag")
 }
 
 func TestDefaultStruct(t *testing.T) {
@@ -122,7 +122,7 @@ func TestDefaultStruct(t *testing.T) {
 	}
 
 	defaultValue := parsed.Default()
-	testutils.AssertEqual(t, *defaultValue, "{}", "Should return a default tag")
+	assert.Equal(t, *defaultValue, "{}", "Should return a default tag")
 }
 
 // We should fail parsing if the same key appears more than once.
@@ -150,14 +150,14 @@ func TestInteresting(t *testing.T) {
 	}
 
 	defaultValue := parsed.Default()
-	testutils.AssertEqual(t, *defaultValue, "abc, def", "Default value should have remained untrimmed")
+	assert.Equal(t, *defaultValue, "abc, def", "Default value should have remained untrimmed")
 
 	isPreinitialized := parsed.IsPreinitialized()
-	testutils.AssertEqual(t, isPreinitialized, true, "This field is preinitialized")
+	assert.Equal(t, isPreinitialized, true, "This field is preinitialized")
 
 	orMethod := parsed.MethodName()
-	testutils.AssertEqual(t, *orMethod, "SomeMethod", "We should have returned the name of the orMethod")
+	assert.Equal(t, *orMethod, "SomeMethod", "We should have returned the name of the orMethod")
 
 	publicName := parsed.PublicFieldName("renaming")
-	testutils.AssertEqual(t, *publicName, "interesting", "We should have returned the correct renaming")
+	assert.Equal(t, *publicName, "interesting", "We should have returned the correct renaming")
 }

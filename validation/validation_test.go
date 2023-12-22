@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pasqal-io/godasse/assertions/testutils"
 	"github.com/pasqal-io/godasse/validation"
+	"gotest.tools/v3/assert"
 )
 
 type ExamplePayload struct {
@@ -38,9 +38,9 @@ func TestInitialization(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	testutils.AssertEqual(t, result.payload.left, "left", "Field left should have been set")
-	testutils.AssertEqual(t, result.payload.right, "right", "Field right should have been set")
-	testutils.AssertEqual(t, result.payload.middle, "", "Field middle should have been zeroed")
+	assert.Equal(t, result.payload.left, "left", "Field left should have been set")
+	assert.Equal(t, result.payload.right, "right", "Field right should have been set")
+	assert.Equal(t, result.payload.middle, "", "Field middle should have been zeroed")
 }
 
 type ExampleValidator struct {
@@ -78,13 +78,13 @@ func TestValidation(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	testutils.AssertEqual(t, good.Kind, "one", "Field Kind should have been left unchanged")
-	testutils.AssertEqual(t, good.kindIndex, 1, "Field kindIndex should have been set")
+	assert.Equal(t, good.Kind, "one", "Field Kind should have been left unchanged")
+	assert.Equal(t, good.kindIndex, uint(1), "Field kindIndex should have been set")
 
 	// This shouldn't.
 	bad := ExampleValidator{ //nolint:exhaustruct
 		Kind: "three",
 	}
 	err = bad.Validate()
-	testutils.AssertEqual(t, err.Error(), "Invalid schema kind three", "Validation should reject")
+	assert.Equal(t, err.Error(), "Invalid schema kind three", "Validation should reject")
 }
