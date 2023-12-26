@@ -202,6 +202,30 @@ func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], erro
 	}, nil
 }
 
+// An error that arises because of a bug in a custom deserializer.
+type CustomDeserializerError struct {
+	// The operation that failed, e.g. "initialize", "orMethod".
+	Operation string
+
+	// The kind of value we were applying it to, e.g. "outer", "struct", "map", "ptr", "field".
+	Structure string
+
+	// The underlying error.
+	Wrapped error
+}
+
+// Return the user-facing message.
+func (e CustomDeserializerError) Error() string {
+	return e.Wrapped.Error()
+}
+
+// Unwrap the error.
+func (e CustomDeserializerError) Unwrap() error {
+	return e.Wrapped
+}
+
+var _ error = CustomDeserializerError{} //nolint:exhaustruct
+
 // ----------------- Private
 
 // Options used while setting up a deserializer.
@@ -395,7 +419,11 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 				if err != nil {
 					err = fmt.Errorf("at %s, encountered an error while initializing optional fields:\n\t * %w", path, err)
 					slog.Error("internal error during deserialization", "error", err)
-					return nil, err
+					return nil, CustomDeserializerError{
+						Wrapped:   err,
+						Operation: "initializer",
+						Structure: "outer",
+					}
 
 				}
 			}
@@ -522,7 +550,11 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 			if err != nil {
 				err = fmt.Errorf("at %s, encountered an error while initializing optional fields:\n\t * %w", path, err)
 				slog.Error("Internal error during deserialization", "error", err)
-				return err
+				return CustomDeserializerError{
+					Wrapped:   err,
+					Operation: "initializer",
+					Structure: "struct",
+				}
 			}
 		}
 
@@ -552,7 +584,11 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 			if err != nil {
 				err = fmt.Errorf("error in optional value at %s\n\t * %w", path, err)
 				slog.Error("Internal error during deserialization", "error", err)
-				return err
+				return CustomDeserializerError{
+					Wrapped:   err,
+					Operation: "orMethod",
+					Structure: "struct",
+				}
 			}
 			reflected := reflect.ValueOf(constructed)
 			outPtr.Set(reflected)
@@ -654,7 +690,11 @@ func makeMapDeserializerFromReflect(path string, typ reflect.Type, options stati
 			if err != nil {
 				err = fmt.Errorf("at %s, encountered an error while initializing optional object:\n\t * %w", path, err)
 				slog.Error("Internal error during deserialization", "error", err)
-				return err
+				return CustomDeserializerError{
+					Wrapped:   err,
+					Operation: "initialize",
+					Structure: "map",
+				}
 			}
 		}
 
@@ -685,7 +725,11 @@ func makeMapDeserializerFromReflect(path string, typ reflect.Type, options stati
 			if err != nil {
 				err = fmt.Errorf("error in optional object at %s\n\t * %w", path, err)
 				slog.Error("Internal error during deserialization", "error", err)
-				return err
+				return CustomDeserializerError{
+					Wrapped:   err,
+					Operation: "orMethod",
+					Structure: "map",
+				}
 			}
 			reflected := reflect.ValueOf(constructed)
 			outPtr.Set(reflected)
@@ -724,6 +768,7 @@ func makeMapDeserializerFromReflect(path string, typ reflect.Type, options stati
 				subInValue, ok := inMap.Lookup(k)
 				if !ok {
 					slog.Error("Internal error while ranging over map: missing value", "path", path, "key", k)
+					// Hobble on.
 					continue
 				}
 
@@ -891,7 +936,11 @@ func makePointerDeserializer(fieldPath string, fieldType reflect.Type, options s
 			if err != nil {
 				err = fmt.Errorf("error in optional value at %s\n\t * %w", fieldPath, err)
 				slog.Error("Internal error during deserialization", "error", err)
-				return err
+				return CustomDeserializerError{
+					Wrapped:   err,
+					Operation: "orMethod",
+					Structure: "ptr",
+				}
 			}
 			outPtr.Set(reflect.ValueOf(result))
 			return nil
@@ -987,7 +1036,11 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 			if err != nil {
 				err = fmt.Errorf("error in optional value at %s\n\t * %w", fieldPath, err)
 				slog.Error("Internal error during deserialization", "error", err)
-				return err
+				return CustomDeserializerError{
+					Wrapped:   err,
+					Operation: "orMethod",
+					Structure: "field",
+				}
 			}
 			input = constructed
 		default:

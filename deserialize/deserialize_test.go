@@ -3,6 +3,7 @@ package deserialize_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -768,6 +769,10 @@ func TestInitializerFaulty(t *testing.T) {
 	sample := EmptyStruct{}
 	_, err := twoWaysGeneric[EmptyStruct, StructInitializerFaulty](t, sample)
 	assert.Equal(t, err.Error(), "at StructInitializerFaulty, encountered an error while initializing optional fields:\n\t * Test error", "Initializer should have initialized our structure")
+
+	asCustom := deserialize.CustomDeserializerError{}
+	ok := errors.As(err, &asCustom)
+	assert.Equal(t, ok, true, "the error should be a CustomDeserializerError")
 }
 
 type StructUnmarshal struct {
