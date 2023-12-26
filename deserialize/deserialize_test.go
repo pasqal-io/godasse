@@ -3,15 +3,15 @@ package deserialize_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/pasqal-io/godasse/assertions/testutils"
 	"github.com/pasqal-io/godasse/deserialize"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
 	"github.com/pasqal-io/godasse/validation"
+	"gotest.tools/v3/assert"
 )
 
 type SimpleStruct struct {
@@ -81,13 +81,13 @@ func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output,
 		t.Error(err)
 		return nil, err //nolint:wrapcheck
 	}
-	dict := make(map[string]any)
+	dict := make(jsonPkg.JSON)
 	err = json.Unmarshal(buf, &dict)
 	if err != nil {
 		t.Error(err)
 		return nil, err //nolint:wrapcheck
 	}
-	return deserializer.DeserializeMap(dict) //nolint:wrapcheck
+	return deserializer.DeserializeDict(dict) //nolint:wrapcheck
 }
 func twoWays[T any](t *testing.T, sample T) (*T, error) {
 	return twoWaysGeneric[T, T](t, sample)
@@ -95,10 +95,7 @@ func twoWays[T any](t *testing.T, sample T) (*T, error) {
 
 func TestDeserializeMapBufAndString(t *testing.T) {
 	deserializer, err := deserialize.MakeMapDeserializer[PrimitiveTypesStruct](deserialize.JSONOptions(""))
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	assert.NilError(t, err)
 	sample := PrimitiveTypesStruct{
 		SomeBool:    true,
 		SomeString:  "Some String",
@@ -116,25 +113,17 @@ func TestDeserializeMapBufAndString(t *testing.T) {
 	}
 	var buf []byte
 	buf, err = json.Marshal(sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	assert.NilError(t, err)
 
 	var result *PrimitiveTypesStruct
 	result, err = deserializer.DeserializeBytes(buf)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, sample, "We should have succeeded when deserializing from bytes")
+	assert.NilError(t, err)
+
+	assert.Equal(t, *result, sample, "We should have succeeded when deserializing from bytes")
 
 	result, err = deserializer.DeserializeString(string(buf))
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, sample, "We should have succeeded when deserializing from string")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, sample, "We should have succeeded when deserializing from string")
 }
 
 func TestDeserializeSimpleStruct(t *testing.T) {
@@ -142,11 +131,8 @@ func TestDeserializeSimpleStruct(t *testing.T) {
 		SomeString: "THIS IS A TEST",
 	}
 	after, err := twoWays[SimpleStruct](t, before)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *after, before, "We should have recovered the same struct")
+	assert.NilError(t, err)
+	assert.Equal(t, *after, before, "We should have recovered the same struct")
 }
 
 // Test with all primitive types.
@@ -167,11 +153,8 @@ func TestDeserializeSimpleTypes(t *testing.T) {
 		SomeUint64:  9,
 	}
 	after, err := twoWays[PrimitiveTypesStruct](t, before)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *after, before, "We should have recovered the same struct")
+	assert.NilError(t, err)
+	assert.Equal(t, *after, before, "We should have recovered the same struct")
 }
 
 // If a field is missing, we should fail.
@@ -179,9 +162,8 @@ func TestDeserializeMissingField(t *testing.T) {
 	before := SimpleStruct{
 		SomeString: "text",
 	}
-	re := regexp.MustCompile("missing value at PrimitiveTypesStruct.*")
 	_, err := twoWaysGeneric[SimpleStruct, PrimitiveTypesStruct](t, before)
-	testutils.AssertRegexp(t, err.Error(), *re, "We should have recovered the same struct")
+	assert.ErrorContains(t, err, "missing value at PrimitiveTypesStruct", "We should have recovered the same struct")
 }
 
 // Test with generics.
@@ -207,10 +189,8 @@ func TestGenerics(t *testing.T) {
 		},
 	}
 	after, err := twoWays[Pair[PrimitiveTypesStruct, SimpleStruct]](t, before)
-	if err != nil {
-		t.Error(err)
-	}
-	testutils.AssertEqual(t, *after, before, "We should have recovered the same struct")
+	assert.NilError(t, err)
+	assert.Equal(t, *after, before, "We should have recovered the same struct")
 }
 
 func TestDeserializeDeepMissingField(t *testing.T) {
@@ -220,9 +200,8 @@ func TestDeserializeDeepMissingField(t *testing.T) {
 			SomeString: "text",
 		},
 	}
-	re := regexp.MustCompile(`missing value at Pair\[int,PrimitiveTypesStruct\]\.right\..*`)
 	_, err := twoWaysGeneric[Pair[int, SimpleStruct], Pair[int, PrimitiveTypesStruct]](t, before)
-	testutils.AssertRegexp(t, err.Error(), *re, "We should have recovered the same struct")
+	assert.ErrorContains(t, err, "missing value at Pair[int,PrimitiveTypesStruct].right", "We should have detected the missing value")
 }
 
 func TestDeserializeSimpleArray(t *testing.T) {
@@ -237,9 +216,9 @@ func TestDeserializeSimpleArray(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	testutils.AssertEqual(t, len(after.SomeArray), len(before.SomeArray), "We should have recovered the same struct")
+	assert.Equal(t, len(after.SomeArray), len(before.SomeArray), "We should have recovered the same struct")
 	for i := 0; i < len(before.SomeArray); i++ {
-		testutils.AssertEqual(t, after.SomeArray[i], before.SomeArray[i], "We should have recovered the same struct")
+		assert.Equal(t, after.SomeArray[i], before.SomeArray[i], "We should have recovered the same struct")
 	}
 }
 
@@ -255,9 +234,9 @@ func TestDeserializeArrayOfStruct(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	testutils.AssertEqual(t, len(after.SomeArray), len(before.SomeArray), "We should have recovered the same struct")
+	assert.Equal(t, len(after.SomeArray), len(before.SomeArray), "We should have recovered the same struct")
 	for i := 0; i < len(before.SomeArray); i++ {
-		testutils.AssertEqual(t, after.SomeArray[i], before.SomeArray[i], "We should have recovered the same struct")
+		assert.Equal(t, after.SomeArray[i], before.SomeArray[i], "We should have recovered the same struct")
 	}
 }
 
@@ -266,11 +245,8 @@ func TestValidationSuccess(t *testing.T) {
 		SomeEmail: "someone@example.com",
 	}
 	after, err := twoWays(t, before)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *after, before, "We should have recovered the same struct")
+	assert.NilError(t, err)
+	assert.Equal(t, *after, before, "We should have recovered the same struct")
 }
 
 func TestValidationFailureField(t *testing.T) {
@@ -278,7 +254,7 @@ func TestValidationFailureField(t *testing.T) {
 		SomeEmail: "someone+example.com",
 	}
 	_, err := twoWays(t, before)
-	testutils.AssertEqual(t, err.Error(), "deserialized value ValidatedStruct did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.Equal(t, err.Error(), "deserialized value ValidatedStruct did not pass validation\n\t * Invalid email", "Validation should have caught the error")
 }
 
 func TestValidationFailureFieldField(t *testing.T) {
@@ -289,7 +265,7 @@ func TestValidationFailureFieldField(t *testing.T) {
 		},
 	}
 	_, err := twoWays(t, before)
-	testutils.AssertEqual(t, err.Error(), "deserialized value Pair[int,ValidatedStruct].right did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.Equal(t, err.Error(), "deserialized value Pair[int,ValidatedStruct].right did not pass validation\n\t * Invalid email", "Validation should have caught the error")
 }
 
 func TestValidationFailureArray(t *testing.T) {
@@ -301,19 +277,19 @@ func TestValidationFailureArray(t *testing.T) {
 		Data: array,
 	}
 	_, err := twoWays(t, before)
-	testutils.AssertEqual(t, err.Error(), "error while deserializing Array[ValidatedStruct].Data[0]:\n\t * deserialized value Array[ValidatedStruct].Data[] did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.Equal(t, err.Error(), "error while deserializing Array[ValidatedStruct].Data[0]:\n\t * deserialized value Array[ValidatedStruct].Data[] did not pass validation\n\t * Invalid email", "Validation should have caught the error")
 }
 
 func TestKVListDoesNotSupportNesting(t *testing.T) {
 	options := deserialize.QueryOptions("") //nolint:exhaustruct
 	_, err := deserialize.MakeKVListDeserializer[PrimitiveTypesStruct](options)
-	testutils.AssertEqual(t, err, nil, "KVList parsing supports simple structurs")
+	assert.Equal(t, err, nil, "KVList parsing supports simple structurs")
 
 	_, err = deserialize.MakeKVListDeserializer[SimpleArrayStruct](options)
-	testutils.AssertEqual(t, err.Error(), "this type of extractor does not support arrays/slices", "KVList parsing does not support nesting")
+	assert.Equal(t, err.Error(), "this type of extractor does not support arrays/slices", "KVList parsing does not support nesting")
 
 	_, err = deserialize.MakeKVListDeserializer[Pair[int, Pair[int, int]]](options)
-	testutils.AssertEqual(t, err.Error(), "this type of extractor does not support nested structs", "KVList parsing does not support nesting")
+	assert.Equal(t, err.Error(), "this type of extractor does not support nested structs", "KVList parsing does not support nesting")
 }
 
 // Test that if we place a string instead of a primitive type, this string
@@ -365,11 +341,8 @@ func TestConversionsSuccess(t *testing.T) {
 		SomeUint64:  9,
 	}
 	result, err := twoWaysGeneric[StringAsPrimitiveTypesStruct, PrimitiveTypesStruct](t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "Deserialization should have parsed strings")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "Deserialization should have parsed strings")
 }
 
 // Test that if we place a string instead of a primitive type, this string
@@ -406,8 +379,7 @@ func TestConversionsFailure(t *testing.T) {
 		SomeString:  "string",
 	}
 	_, err := twoWaysGeneric[StringAsPrimitiveTypesStruct, PrimitiveTypesStruct](t, sample)
-	re := regexp.MustCompile("invalid value at PrimitiveTypesStruct.*, expected .*, got string")
-	testutils.AssertRegexp(t, err.Error(), *re, "Deserialization should have parsed strings")
+	assert.ErrorContains(t, err, "invalid value at PrimitiveTypesStruct", "We should detect syntax errors in default values during setup.")
 }
 
 // Test that default values are parsed.
@@ -444,11 +416,8 @@ func TestPrimitiveDefaultValues(t *testing.T) {
 		SomeUint64:  9,
 	}
 	result, err := twoWaysGeneric[EmptyStruct, PrimitiveTypesStructWithDefault](t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "Deserialization should have inserted default values")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "Deserialization should have inserted default values")
 }
 
 // Test that default values are parsed.
@@ -463,11 +432,8 @@ func TestStructDefaultValues(t *testing.T) {
 		Right: EmptyStruct{},
 	}
 	result, err := twoWaysGeneric[EmptyStruct, PairWithDefaults[EmptyStruct, EmptyStruct]](t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "Deserialization should have inserted default values")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "Deserialization should have inserted default values")
 }
 
 func TestStructDefaultValuesInvalidSyntax(t *testing.T) {
@@ -477,7 +443,7 @@ func TestStructDefaultValuesInvalidSyntax(t *testing.T) {
 	}
 	_, err := deserialize.MakeMapDeserializer[PairWithDefaults[PairWithDefaults[EmptyStruct, int], int]](deserialize.JSONOptions(""))
 
-	testutils.AssertEqual(t, err.Error(), "could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left with type PairWithDefaults[EmptyStruct,int]:\n\t * could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right with type int:\n\t * cannot parse default value at PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right\n\t * strconv.Atoi: parsing \"{}\": invalid syntax", "MakeMapDeserializer should have detected an error")
+	assert.Equal(t, err.Error(), "could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left with type PairWithDefaults[EmptyStruct,int]:\n\t * could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right with type int:\n\t * cannot parse default value at PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right\n\t * strconv.Atoi: parsing \"{}\": invalid syntax", "MakeMapDeserializer should have detected an error")
 }
 
 // Check that when we have a default struct of {}, we're still going to
@@ -505,11 +471,8 @@ func TestStructDefaultValuesNestedStruct(t *testing.T) {
 		},
 	}
 	result, err := twoWaysGeneric[EmptyStruct, PairWithDefaults[PairWithDefaults[SimpleStructWithDefaults, SimpleStructWithDefaults], SimpleStructWithDefaults]](t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "We should have inserted default values recursively")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "We should have inserted default values recursively")
 }
 
 // Test that default values are parsed.
@@ -518,11 +481,8 @@ func TestSliceDefaultValues(t *testing.T) {
 		Data []EmptyStruct `default:"[]"`
 	}
 	result, err := twoWaysGeneric[EmptyStruct, ArrayWithDefault](t, EmptyStruct{})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, len(result.Data), 0, "Deserialization should have inserted default values")
+	assert.NilError(t, err)
+	assert.Equal(t, len(result.Data), 0, "Deserialization should have inserted default values")
 }
 
 // Test that default values are parsed.
@@ -542,8 +502,7 @@ func TestBadDefaultValues(t *testing.T) {
 		SomeUint64  uint64  `default:"blue"`
 	}
 	_, err := deserialize.MakeMapDeserializer[PrimitiveTypesStructWithDefault](deserialize.JSONOptions("")) //nolint:exhaustruct
-	re := regexp.MustCompile("cannot parse default value at PrimitiveTypesStruct.*")
-	testutils.AssertRegexp(t, err.Error(), *re, "Deserialization should have parsed strings")
+	assert.ErrorContains(t, err, "cannot parse default value at PrimitiveTypesStruct", "Deserialization should have parsed strings")
 }
 
 type SimpleStructWithOrMethodSuccess struct {
@@ -560,11 +519,8 @@ func TestOrMethodSuccess(t *testing.T) {
 		SomeString: "Test value constructed with a method",
 	}
 	result, err := twoWaysGeneric[EmptyStruct, SimpleStructWithOrMethodSuccess](t, EmptyStruct{})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "The method should have been called to inject a value")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "The method should have been called to inject a value")
 }
 
 type SimpleStructWithOrMethodError struct {
@@ -578,7 +534,7 @@ func (SimpleStructWithOrMethodError) MakeString() (string, error) {
 // Test that an `orMethod` will be called if no value is provided (error case).
 func TestOrMethodError(t *testing.T) {
 	_, err := twoWaysGeneric[EmptyStruct, SimpleStructWithOrMethodError](t, EmptyStruct{})
-	testutils.AssertEqual(t, err.Error(), "error in optional value at SimpleStructWithOrMethodError.SomeString\n\t * This is an error from SimpleStructWithOrMethodError", "The method should have been called to inject a value")
+	assert.Equal(t, err.Error(), "error in optional value at SimpleStructWithOrMethodError.SomeString\n\t * This is an error from SimpleStructWithOrMethodError", "The method should have been called to inject a value")
 }
 
 type SimpleStructWithOrMethodBadName struct {
@@ -611,16 +567,16 @@ func (SimpleStructWithOrMethodBadOut1) BadOut2() (string, string) {
 // Test error cases for `onMethod` setup.
 func TestOrMethodBadSetup(t *testing.T) {
 	_, err := deserialize.MakeMapDeserializer[SimpleStructWithOrMethodBadName](deserialize.JSONOptions("")) //nolint:exhaustruct
-	testutils.AssertEqual(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadName.SomeString with type string:\n\t * at SimpleStructWithOrMethodBadName.SomeString, failed to setup `orMethod`\n\t * method IDoNotExist provided with `orMethod` doesn't seem to exist - note that the method must be public", "We should fail early if the orMethod doesn't exist")
+	assert.Equal(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadName.SomeString with type string:\n\t * at SimpleStructWithOrMethodBadName.SomeString, failed to setup `orMethod`\n\t * method IDoNotExist provided with `orMethod` doesn't seem to exist - note that the method must be public", "We should fail early if the orMethod doesn't exist")
 
 	_, err = deserialize.MakeMapDeserializer[SimpleStructWithOrMethodBadArgs](deserialize.JSONOptions(""))
-	testutils.AssertEqual(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadArgs.SomeString with type string:\n\t * at SimpleStructWithOrMethodBadArgs.SomeString, failed to setup `orMethod`\n\t * the method provided with `orMethod` MUST take no argument but takes 1 arguments", "We should fail early if orMethod args are incorrect")
+	assert.Equal(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadArgs.SomeString with type string:\n\t * at SimpleStructWithOrMethodBadArgs.SomeString, failed to setup `orMethod`\n\t * the method provided with `orMethod` MUST take no argument but takes 1 arguments", "We should fail early if orMethod args are incorrect")
 
 	_, err = deserialize.MakeMapDeserializer[SimpleStructWithOrMethodBadOut1](deserialize.JSONOptions(""))
-	testutils.AssertEqual(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadOut1.SomeInt with type int:\n\t * at SimpleStructWithOrMethodBadOut1.SomeInt, failed to setup `orMethod`\n\t * the method provided with `orMethod` MUST return (int, error) but it returns (string, _) which is not convertible to `int`", "We should fail early if first result is incorrect")
+	assert.Equal(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadOut1.SomeInt with type int:\n\t * at SimpleStructWithOrMethodBadOut1.SomeInt, failed to setup `orMethod`\n\t * the method provided with `orMethod` MUST return (int, error) but it returns (string, _) which is not convertible to `int`", "We should fail early if first result is incorrect")
 
 	_, err = deserialize.MakeMapDeserializer[SimpleStructWithOrMethodBadOut2](deserialize.JSONOptions(""))
-	testutils.AssertEqual(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadOut2.SomeString with type string:\n\t * at SimpleStructWithOrMethodBadOut2.SomeString, failed to setup `orMethod`\n\t * method BadOut2 provided with `orMethod` doesn't seem to exist - note that the method must be public", "We should fail early if second result is incorrect")
+	assert.Equal(t, err.Error(), "could not generate a deserializer for SimpleStructWithOrMethodBadOut2.SomeString with type string:\n\t * at SimpleStructWithOrMethodBadOut2.SomeString, failed to setup `orMethod`\n\t * method BadOut2 provided with `orMethod` doesn't seem to exist - note that the method must be public", "We should fail early if second result is incorrect")
 }
 
 type NestedStructWithOrMethod struct {
@@ -640,11 +596,8 @@ func TestOrMethodStruct(t *testing.T) {
 		},
 	}
 	result, err := twoWaysGeneric[EmptyStruct, NestedStructWithOrMethod](t, EmptyStruct{})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "The method should have been called to inject a value")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "The method should have been called to inject a value")
 }
 
 type NestedSliceWithOrMethod struct {
@@ -666,11 +619,8 @@ func TestOrMethodSlice(t *testing.T) {
 	expected := NestedSliceWithOrMethod{}
 	expected.SomeSlice, _ = expected.MakeSimpleSlice()
 	result, err := twoWaysGeneric[EmptyStruct, NestedSliceWithOrMethod](t, EmptyStruct{})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqualArrays(t, result.SomeSlice, expected.SomeSlice, "The method should have been called to inject a value")
+	assert.NilError(t, err)
+	assert.DeepEqual(t, result.SomeSlice, expected.SomeSlice)
 }
 
 type StructWithPointer struct {
@@ -685,11 +635,8 @@ func TestDeserializePointer(t *testing.T) {
 		SomePointer: &simpleStruct,
 	}
 	result, err := twoWays(t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, result.SomePointer.SomeString, sample.SomePointer.SomeString, "We should be able to deserialize with pointers")
+	assert.NilError(t, err)
+	assert.Equal(t, result.SomePointer.SomeString, sample.SomePointer.SomeString, "We should be able to deserialize with pointers")
 }
 
 func TestPointerDefaultValue(t *testing.T) {
@@ -697,11 +644,9 @@ func TestPointerDefaultValue(t *testing.T) {
 		SomePointer *SimpleStruct `default:"nil"`
 	}
 	result, err := twoWaysGeneric[EmptyStruct, StructWithPointerDefault](t, EmptyStruct{})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, result.SomePointer, nil, "We should be able to deserialize with pointers using a default nil")
+	assert.NilError(t, err)
+	var expected *SimpleStruct /* = nil */
+	assert.Equal(t, result.SomePointer, expected, "We should be able to deserialize with pointers using a default nil")
 }
 
 type StructWithPointerOrMethod struct {
@@ -719,11 +664,8 @@ func TestPointerOrMethod(t *testing.T) {
 	sample := new(StructWithPointerOrMethod)
 	sample.SomePointer, _ = sample.MakeSimpleStructPtr()
 	result, err := twoWaysGeneric[EmptyStruct, StructWithPointerOrMethod](t, EmptyStruct{})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, result.SomePointer.SomeString, sample.SomePointer.SomeString, "We should be able to deserialize with pointers using a orMethod")
+	assert.NilError(t, err)
+	assert.Equal(t, result.SomePointer.SomeString, sample.SomePointer.SomeString, "We should be able to deserialize with pointers using a orMethod")
 }
 
 type StructWithInitializer struct {
@@ -767,11 +709,8 @@ func TestInitializer(t *testing.T) {
 	expected := StructWithInitializer{}
 	_ = expected.Initialize()
 	result, err := twoWaysGeneric[EmptyStruct, StructWithInitializer](t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "Initializer should have initialized our structure")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "Initializer should have initialized our structure")
 }
 
 // Test that we're correctly running pre-initialization within another struct.
@@ -786,11 +725,8 @@ func TestInitializerNested(t *testing.T) {
 	}
 	_ = expected.Right.Initialize()
 	result, err := twoWaysGeneric[Pair[EmptyStruct, EmptyStruct], Pair[EmptyStruct, StructWithInitializer]](t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, expected, "Initializer should have initialized our structure")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, expected, "Initializer should have initialized our structure")
 }
 
 type StructInitializerFaulty struct {
@@ -832,7 +768,11 @@ var _ validation.Initializer = &StructInitializerFaulty{} // Type assertion.
 func TestInitializerFaulty(t *testing.T) {
 	sample := EmptyStruct{}
 	_, err := twoWaysGeneric[EmptyStruct, StructInitializerFaulty](t, sample)
-	testutils.AssertEqual(t, err.Error(), "at StructInitializerFaulty, encountered an error while initializing optional fields:\n\t * Test error", "Initializer should have initialized our structure")
+	assert.Equal(t, err.Error(), "at StructInitializerFaulty, encountered an error while initializing optional fields:\n\t * Test error", "Initializer should have initialized our structure")
+
+	asCustom := deserialize.CustomDeserializerError{}
+	ok := errors.As(err, &asCustom)
+	assert.Equal(t, ok, true, "the error should be a CustomDeserializerError")
 }
 
 type StructUnmarshal struct {
@@ -863,11 +803,8 @@ func TestUnmarshal(t *testing.T) {
 		},
 	}
 	result, err := twoWays(t, sample)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	testutils.AssertEqual(t, *result, sample, "We should have deserialized correctly through UnmarshalJSON")
+	assert.NilError(t, err)
+	assert.Equal(t, *result, sample, "We should have deserialized correctly through UnmarshalJSON")
 }
 
 // A data structure that implements Validate but forgets the pointer.
@@ -888,10 +825,57 @@ func (BadInitializeStruct) Initialize() error { // Should be `func (BadInitializ
 
 var _ validation.Initializer = BadInitializeStruct{}
 
+// Test that we can detect bad implementations of `Validator` or `Initializer` that do not
+// work on pointers.
 func TestBadValidate(t *testing.T) {
 	_, err := deserialize.MakeMapDeserializer[BadValidateStruct](deserialize.JSONOptions("")) //nolint:exhaustruct
-	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadValidateStruct implements validation.Validator - it should be implemented by pointer type *deserialize_test.BadValidateStruct instead", "We should have detected that this struct does not implement Validator correctly")
+	assert.Equal(t, err.Error(), "type deserialize_test.BadValidateStruct implements validation.Validator - it should be implemented by pointer type *deserialize_test.BadValidateStruct instead", "We should have detected that this struct does not implement Validator correctly")
 
 	_, err = deserialize.MakeMapDeserializer[BadInitializeStruct](deserialize.JSONOptions("")) //nolint:exhaustruct
-	testutils.AssertEqual(t, err.Error(), "type deserialize_test.BadInitializeStruct implements validation.Initializer - it should be implemented by pointer type *deserialize_test.BadInitializeStruct instead", "We should have detected that this struct does not implement Initializer correctly")
+	assert.Equal(t, err.Error(), "type deserialize_test.BadInitializeStruct implements validation.Initializer - it should be implemented by pointer type *deserialize_test.BadInitializeStruct instead", "We should have detected that this struct does not implement Initializer correctly")
+}
+
+type StructMap[T any] struct {
+	RegularMap  map[string]T
+	DefaultMap  map[string]T `default:"{}"`
+	OrMethodMap map[string]T `orMethod:"SetupMap"`
+}
+
+func (StructMap[T]) SetupMap() (map[string]T, error) {
+	result := make(map[string]T)
+	return result, nil
+}
+
+func TestMap(t *testing.T) {
+	type SimpleStructWithDefault struct {
+		SomeString string `default:"default value"`
+	}
+
+	_, err := twoWaysGeneric[EmptyStruct, StructMap[SimpleStructWithDefault]](t, EmptyStruct{})
+	assert.ErrorContains(t, err, "missing object value at StructMap", "We should have failed because the map is missing a default or a value")
+
+	sampleMap := map[string]int{"zero": 0, "one": 1, "two": 2}
+	expected := StructMap[int]{
+		RegularMap:  sampleMap,
+		DefaultMap:  map[string]int{},
+		OrMethodMap: map[string]int{},
+	}
+	extracted, err := twoWaysGeneric[StructMap[int], StructMap[int]](t, StructMap[int]{
+		RegularMap: sampleMap,
+	})
+	if err != nil {
+		t.Error(err)
+
+		return
+	}
+	assert.DeepEqual(t, *extracted, expected)
+}
+
+func TestBadMapMap(t *testing.T) {
+	type BadMap struct {
+		Field map[int]string
+	}
+
+	_, err := deserialize.MakeMapDeserializer[BadMap](deserialize.JSONOptions(""))
+	assert.ErrorContains(t, err, "invalid map type at BadMap.Field, only map[string]T can be converted into a deserializer", "We should have detected that we cannot convert maps with such keys")
 }
