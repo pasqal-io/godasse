@@ -189,12 +189,12 @@ func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], erro
 		return nil, err
 	}
 	deserializer := func(value kvlist.KVList) (*T, error) {
-		normalized := new(jsonPkg.JSON)
-		err := deListMap[T](*normalized, value, innerOptions)
+		normalized := make(jsonPkg.JSON)
+		err := deListMap[T](normalized, value, innerOptions)
 		if err != nil {
 			return nil, fmt.Errorf("error attempting to deserialize from a list of entries:\n\t * %w", err)
 		}
-		return wrapped.deserializer(*normalized)
+		return wrapped.deserializer(normalized)
 	}
 	return kvListDeserializer[T]{
 		deserializer: deserializer,

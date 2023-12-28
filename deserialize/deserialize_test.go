@@ -10,6 +10,7 @@ import (
 
 	"github.com/pasqal-io/godasse/deserialize"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
+	"github.com/pasqal-io/godasse/deserialize/kvlist"
 	"github.com/pasqal-io/godasse/validation"
 	"gotest.tools/v3/assert"
 )
@@ -283,13 +284,55 @@ func TestValidationFailureArray(t *testing.T) {
 func TestKVListDoesNotSupportNesting(t *testing.T) {
 	options := deserialize.QueryOptions("") //nolint:exhaustruct
 	_, err := deserialize.MakeKVListDeserializer[PrimitiveTypesStruct](options)
-	assert.Equal(t, err, nil, "KVList parsing supports simple structurs")
+	assert.NilError(t, err, "KVList parsing supports simple structurs")
 
 	_, err = deserialize.MakeKVListDeserializer[SimpleArrayStruct](options)
 	assert.Equal(t, err.Error(), "this type of extractor does not support arrays/slices", "KVList parsing does not support nesting")
 
 	_, err = deserialize.MakeKVListDeserializer[Pair[int, Pair[int, int]]](options)
 	assert.Equal(t, err.Error(), "this type of extractor does not support nested structs", "KVList parsing does not support nesting")
+}
+
+func TestKVListSimple(t *testing.T) {
+	options := deserialize.QueryOptions("") //nolint:exhaustruct
+	deserializer, err := deserialize.MakeKVListDeserializer[PrimitiveTypesStruct](options)
+	assert.NilError(t, err)
+
+	var entry kvlist.KVList = make(kvlist.KVList)
+	entry["SomeBool"] = []string{"true"}
+	entry["SomeString"] = []string{"blue"}
+	entry["SomeFloat32"] = []string{"3.14"}
+	entry["SomeFloat64"] = []string{"1.69"}
+	entry["SomeInt"] = []string{"-1"}
+	entry["SomeInt8"] = []string{"-8"}
+	entry["SomeInt16"] = []string{"-16"}
+	entry["SomeInt32"] = []string{"-32"}
+	entry["SomeInt64"] = []string{"-64"}
+	entry["SomeUint8"] = []string{"8"}
+	entry["SomeUint16"] = []string{"16"}
+	entry["SomeUint32"] = []string{"32"}
+	entry["SomeUint64"] = []string{"64"}
+
+	sample := PrimitiveTypesStruct{
+		SomeBool:    true,
+		SomeString:  "blue",
+		SomeFloat32: 3.14,
+		SomeFloat64: 1.69,
+		SomeInt:     -1,
+		SomeInt8:    -8,
+		SomeInt16:   -16,
+		SomeInt32:   -32,
+		SomeInt64:   -64,
+		SomeUint8:   8,
+		SomeUint16:  16,
+		SomeUint32:  32,
+		SomeUint64:  64,
+	}
+
+	deserialized, err := deserializer.DeserializeKVList(entry)
+	assert.NilError(t, err)
+
+	assert.Equal(t, *deserialized, sample, "We should have extracted the expected value")
 }
 
 // Test that if we place a string instead of a primitive type, this string

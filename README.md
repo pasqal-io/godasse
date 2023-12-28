@@ -1,3 +1,5 @@
+![Go badge](https://github.com/pasqal-io/godasse/actions/workflows/go.yml/badge.svg)![Golangci-lint](https://github.com/pasqal-io/godasse/actions/workflows/golangci-lint.yml/badge.svg)
+
 # About
 
 Go Deserializer for Acceptable Safety Side-Engine (or Godasse) is an alternative deserialization mechanism for Go.
