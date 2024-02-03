@@ -123,3 +123,8 @@ func LookupParser(fieldType reflect.Type) *Parser {
 	}
 	return result
 }
+
+// A type that can be deserialized from a shared.Dict.
+type UnmarshalDict interface {
+	UnmarshalDict(Dict) error
+}

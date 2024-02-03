@@ -116,12 +116,25 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 
 	var buf []byte
 	switch typed := in.(type) {
+	// Normalize string, []byte into []byte.
 	case string:
 		buf = []byte(typed)
 	case []byte:
 		buf = typed
+	// Unwrap Value.
 	case Value:
 		return u.Unmarshal(typed.wrapped, out)
+	case JSON:
+		if reflect.TypeOf(out).Elem() == dictionary {
+			*out = typed
+			return nil
+		}
+
+		// Sadly, at this stage, we need to reserialize.
+		buf, err = json.Marshal(typed)
+		if err != nil {
+			return fmt.Errorf("internal error while deserializing: \n\t * %w", err)
+		}
 	default:
 		return fmt.Errorf("expected a string, got %s", in)
 	}

@@ -98,13 +98,20 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 		buf = typed
 	case Value:
 		return u.Unmarshal(typed.wrapped, out)
+	case KVList:
+		if reflect.TypeOf(out).Elem() == kvList {
+			*out = typed
+			return nil
+		}
+		// Sadly, at this stage, we need to reserialize.
+		buf, err = json.Marshal(typed)
+		if err != nil {
+			return fmt.Errorf("internal error while deserializing: \n\t * %w", err)
+		}
 	default:
 		return fmt.Errorf("expected a string, got %s", in)
 	}
 
-	if dict, ok := (*out).(*shared.Dict); ok {
-		return json.Unmarshal(buf, &dict) //nolint:wrapcheck
-	}
 	if unmarshal, ok := (*out).(Unmarshaler); ok {
 		return unmarshal.Unmarshal(buf) //nolint:wrapcheck
 	}
