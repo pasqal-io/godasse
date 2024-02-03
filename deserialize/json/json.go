@@ -99,32 +99,10 @@ func (u Driver) ShouldUnmarshal(typ reflect.Type) bool {
 	return false
 }
 
-// Deserialize to a JSON dict.
-//
-// You probably won't ever need to call this method.
-func (u Driver) Dict(buf []byte) (result shared.Dict, err error) {
-	defer func() {
-		// Attempt to intercept errors that leak implementation details.
-		if err != nil {
-			unmarshalErr := json.UnmarshalTypeError{} //nolint:exhaustruct
-			if errors.Is(err, &unmarshalErr) {
-				// Go error will mention `map[string] interface{}`, which is an implementation detail.
-				err = fmt.Errorf("at %s, invalid json value", unmarshalErr.Field)
-			}
-		}
-	}()
-	dict := make(JSON)
-	err = json.Unmarshal(buf, &dict)
-	if err != nil {
-		return nil, err //nolint:wrapcheck
-	}
-	return dict, nil
-}
-
 // Perform unmarshaling.
 //
 // You probably won't ever need to call this method.
-func (u Driver) Unmarshal(buf []byte, out *any) (err error) {
+func (u Driver) Unmarshal(in any, out *any) (err error) {
 	defer func() {
 		// Attempt to intercept errors that leak implementation details.
 		if err != nil {
@@ -136,16 +114,27 @@ func (u Driver) Unmarshal(buf []byte, out *any) (err error) {
 		}
 	}()
 
-	// Attempt de deserialize as a dictionary.
-	if dict, ok := (*out).(*shared.Dict); ok {
-		return json.Unmarshal(buf, &dict) //nolint:wrapcheck
+	var buf []byte
+	switch typed := in.(type) {
+	case string:
+		buf = []byte(typed)
+	case []byte:
+		buf = typed
+	case Value:
+		return u.Unmarshal(typed.wrapped, out)
+	default:
+		return fmt.Errorf("expected a string, got %s", in)
 	}
 
 	// Attempt to deserialize as a `json.Unmarshaler`.
 	if unmarshal, ok := (*out).(json.Unmarshaler); ok {
 		return unmarshal.UnmarshalJSON(buf) //nolint:wrapcheck
 	}
-	return fmt.Errorf("type %s cannot be deserialized", reflect.TypeOf(out).Name())
+	err = json.Unmarshal(buf, out)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal '%s': \n\t * %w", buf, err)
+	}
+	return nil
 }
 
 func (u Driver) WrapValue(wrapped any) shared.Value {

@@ -64,10 +64,10 @@
 package deserialize
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/pasqal-io/godasse/deserialize/internal"
@@ -80,7 +80,7 @@ import (
 
 // -------- Public API --------
 
-type Unmarshaler = shared.Driver
+type Unmarshaler shared.Driver
 
 // Options for building a deserializer.
 //
@@ -139,7 +139,7 @@ func QueryOptions(root string) Options {
 }
 
 // A deserializer from strings or buffers.
-type Deserializer[To any] interface {
+type BytesDeserializer[To any] interface {
 	DeserializeString(string) (*To, error)
 	DeserializeBytes([]byte) (*To, error)
 }
@@ -148,15 +148,17 @@ type Deserializer[To any] interface {
 //
 // Use this to deserialize e.g. JSON bodies.
 type MapDeserializer[To any] interface {
-	Deserializer[To]
+	BytesDeserializer[To]
+	// Deserialize a single value from a dict.
 	DeserializeDict(shared.Dict) (*To, error)
+	// Deserialize a list of values from a list of values.
+	DeserializeList([]shared.Value) ([]To, error)
 }
 
 // A deserializer from key, lists of values.
 //
 // Use this to deserialize e.g. query strings.
 type KVListDeserializer[To any] interface {
-	Deserializer[To]
 	DeserializeKVList(kvlist.KVList) (*To, error)
 }
 
@@ -164,7 +166,7 @@ type KVListDeserializer[To any] interface {
 func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
-		tagName = JSON
+		return nil, errors.New("missing option MainTagName")
 	}
 	return makeOuterStructDeserializer[T](options.RootPath, staticOptions{
 		renamingTagName: tagName,
@@ -177,7 +179,7 @@ func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
-		tagName = "query"
+		return nil, errors.New("missing option MainTagName")
 	}
 	innerOptions := staticOptions{
 		renamingTagName: tagName,
@@ -247,20 +249,38 @@ type mapDeserializer[T any] struct {
 	options      staticOptions
 }
 
-func (me mapDeserializer[T]) DeserializeDict(value shared.Dict) (*T, error) {
-	return me.deserializer(value)
-}
-
 func (me mapDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
-	dict, err := me.options.unmarshaler.Dict(source)
-	if err != nil {
-		return nil, err //nolint:wrapcheck
+	dict := new(any)
+	if err := me.options.unmarshaler.Unmarshal(source, dict); err != nil {
+		return nil, fmt.Errorf("failed to deserialize source: \n\t * %w", err)
 	}
-	return me.deserializer(dict)
+	asDict, ok := me.options.unmarshaler.WrapValue(*dict).AsDict()
+	if !ok {
+		return nil, fmt.Errorf("failed to deserialize as a dictionary")
+	}
+	return me.deserializer(asDict)
 }
 
 func (me mapDeserializer[T]) DeserializeString(source string) (*T, error) {
 	return me.DeserializeBytes([]byte(source))
+}
+
+func (me mapDeserializer[T]) DeserializeDict(value shared.Dict) (*T, error) {
+	return me.deserializer(value)
+}
+
+func (me mapDeserializer[T]) DeserializeList(list []shared.Value) ([]T, error) {
+	result := []T{}
+	for i, entry := range list {
+		if dict, ok := entry.AsDict(); ok {
+			r, err := me.deserializer(dict)
+			if err != nil {
+				return []T{}, fmt.Errorf("failed to deserialize entry %d: \n\t * %w", i, err)
+			}
+			result = append(result, *r)
+		}
+	}
+	return result, nil
 }
 
 // A deserializer from (key, []string) maps.
@@ -382,7 +402,7 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 	container := new(T) // An uninitialized container, used to extract type information and call initializer methods.
 
 	if options.unmarshaler == nil {
-		panic("Please specify an unmarshaler")
+		return nil, errors.New("please specify an unmarshaler")
 	}
 
 	// Pre-check if we're going to perform initialization.
@@ -413,9 +433,9 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 				var err error
 				if !ok {
 					err = fmt.Errorf("we have already checked that the result can be converted to `Initializer` but conversion has failed")
-				} else {
-					err = initializer.Initialize()
+					panic(err)
 				}
+				err = initializer.Initialize()
 				if err != nil {
 					err = fmt.Errorf("at %s, encountered an error while initializing optional fields:\n\t * %w", path, err)
 					slog.Error("internal error during deserialization", "error", err)
@@ -599,19 +619,10 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 		}
 
 		if initializationData.canUnmarshalSelf {
-			// Our struct supports `Unmarshaler`. This means that:
-			//
-			// - it enforces its own invariants (we do not perform pre-initialization or in-depth validation);
-			// - from the point of view of the outside world, this MUST be a string.
-			inString, ok := inValue.Interface().(string)
-			if !ok {
-				err = fmt.Errorf("invalid value at %s, expected a string holding a %s, got %s", path, typeName(typ), inValue)
-				return err
-			}
 			resultPtrAny := resultPtr.Interface()
-			err = options.unmarshaler.Unmarshal([]byte(inString), &resultPtrAny)
+			err = options.unmarshaler.Unmarshal(inValue, &resultPtrAny)
 			if err != nil {
-				err = fmt.Errorf("invalid string at %s, expected to be able to parse a %s:\n\t * %w", path, typeName(typ), err)
+				err = fmt.Errorf("at %s, expected to be able to parse a %s:\n\t * %w", path, typeName(typ), err)
 				return err
 			}
 		} else {
@@ -744,13 +755,8 @@ func makeMapDeserializerFromReflect(path string, typ reflect.Type, options stati
 			//
 			// - it enforces its own invariants (we do not perform pre-initialization or in-depth validation);
 			// - from the point of view of the outside world, this MUST be a string.
-			inString, ok := inValue.Interface().(string)
-			if !ok {
-				err = fmt.Errorf("invalid value at %s, expected a string holding a %s, got %s", path, typeName(typ), inValue)
-				return err
-			}
 			resultPtrAny := result.Interface()
-			err = options.unmarshaler.Unmarshal([]byte(inString), &resultPtrAny)
+			err = options.unmarshaler.Unmarshal(inValue.Interface(), &resultPtrAny)
 			if err != nil {
 				err = fmt.Errorf("invalid string at %s, expected to be able to parse a %s:\n\t * %w", path, typeName(typ), err)
 				return err
@@ -972,13 +978,24 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 	typeName := typeName(fieldType)
 
 	// A parser in case we receive our data as a string.
-	parser, err := makeParser(fieldType, options)
-	if err != nil {
-		return nil, fmt.Errorf("at %s, failed to build a parser:\n\t * %w", fieldPath, err)
-	}
+	parser := shared.LookupParser(fieldType)
 
+	// An unmarshaler in case we receive our data as... something else.
+	var unmarshaler *func(any) (any, error)
+	if options.unmarshaler.ShouldUnmarshal(fieldType) {
+		u := func(source any) (any, error) {
+			result := reflect.New(fieldType).Interface()
+			err := options.unmarshaler.Unmarshal(source, &result)
+			if err != nil {
+				err = fmt.Errorf("invalid data at, expected to be able to parse a %s:\n\t * %w", typeName, err)
+				return nil, err
+			}
+			return result, nil
+		}
+		unmarshaler = &u
+	}
 	// Early check that we're not misusing Validator.
-	_, err = canInterface(fieldType, validatorInterface)
+	_, err := canInterface(fieldType, validatorInterface)
 	if err != nil {
 		return nil, err
 	}
@@ -1055,6 +1072,7 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 			//
 			// Perhaps we can fix it.
 			recovered := false
+			var parsed any
 			if parser != nil {
 				if inputString, ok := input.(string); ok {
 					// The input is represented as a string, but we're not looking for a
@@ -1062,14 +1080,21 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 					// everything is a string, or for json bodies, in case of client error.
 					//
 					// Regardless, let's try and convert.
-					parsed, err := (*parser)(inputString)
+					parsed, err = (*parser)(inputString)
 					if err == nil {
-						input = parsed
 						recovered = true
 					}
 				}
 			}
-			if !recovered {
+			if !recovered && unmarshaler != nil {
+				parsed, err = (*unmarshaler)(input)
+				if err == nil {
+					recovered = true
+				}
+			}
+			if recovered {
+				input = parsed
+			} else {
 				return fmt.Errorf("invalid value at %s, expected %s, got %s", fieldPath, typeName, reflectedInput.Type().Name())
 			}
 			reflectedInput = reflect.ValueOf(input)
@@ -1132,104 +1157,6 @@ func typeName(typ reflect.Type) string {
 	fullName := typ.Name()
 	pkgName := fmt.Sprint(typ.PkgPath(), ".")
 	return strings.ReplaceAll(fullName, pkgName, "")
-}
-
-// A parser for strings into primitive values.
-type parser func(source string) (any, error)
-
-func makeParser(fieldType reflect.Type, options staticOptions) (*parser, error) {
-	var result *parser
-	switch fieldType.Kind() {
-	case reflect.Bool:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseBool(source) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Float32:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseFloat(source, 32) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Float64:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseFloat(source, 64) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Int:
-		var p parser = func(source string) (any, error) {
-			return strconv.Atoi(source) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Int8:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseInt(source, 10, 8) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Int16:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseInt(source, 10, 16) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Int32:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseInt(source, 10, 32) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Int64:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseInt(source, 10, 64) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Uint:
-		var p parser = func(source string) (any, error) {
-			// `uint` size is not specified, we'll try with 64 bits.
-			return strconv.ParseUint(source, 10, 64) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Uint8:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseUint(source, 10, 8) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Uint16:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseUint(source, 10, 16) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Uint32:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseUint(source, 10, 32) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.Uint64:
-		var p parser = func(source string) (any, error) {
-			return strconv.ParseUint(source, 10, 64) //nolint:wrapcheck
-		}
-		result = &p
-	case reflect.String:
-		var p parser = func(source string) (any, error) {
-			return source, nil
-		}
-		result = &p
-	default:
-		if options.unmarshaler.ShouldUnmarshal(fieldType) {
-			var p parser = func(source string) (any, error) {
-				bytes := []byte(source)
-				result := reflect.New(fieldType).Interface()
-				err := options.unmarshaler.Unmarshal(bytes, &result)
-				if err != nil {
-					err = fmt.Errorf("invalid string at, expected to be able to parse a %s:\n\t * %w", typeName(fieldType), err)
-					return nil, err
-				}
-				return result, nil
-			}
-			result = &p
-		} else {
-			return nil, fmt.Errorf("type %s cannot be deserialized", fieldType)
-		}
-	}
-
-	return result, nil
 }
 
 // A custom constructor provided with tag `orMethod`.

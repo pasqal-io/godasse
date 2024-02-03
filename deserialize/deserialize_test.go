@@ -11,6 +11,7 @@ import (
 	"github.com/pasqal-io/godasse/deserialize"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
 	"github.com/pasqal-io/godasse/deserialize/kvlist"
+	"github.com/pasqal-io/godasse/deserialize/shared"
 	"github.com/pasqal-io/godasse/validation"
 	"gotest.tools/v3/assert"
 )
@@ -71,6 +72,7 @@ var _ validation.Validator = &ValidatedStruct{} // Type assertion.
 func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output, error) {
 	deserializer, err := deserialize.MakeMapDeserializer[Output](deserialize.Options{
 		Unmarshaler: jsonPkg.Driver{},
+		MainTagName: "json",
 	})
 	if err != nil {
 		t.Error(err)
@@ -90,8 +92,67 @@ func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output,
 	}
 	return deserializer.DeserializeDict(dict) //nolint:wrapcheck
 }
+func twoWaysList[T any](t *testing.T, samples []T) ([]T, error) {
+	return twoWaysListGeneric[T, T](t, samples)
+}
+
+func twoWaysListGeneric[Input any, Output any](t *testing.T, samples []Input) ([]Output, error) {
+	deserializer, err := deserialize.MakeMapDeserializer[Output](deserialize.Options{
+		Unmarshaler: jsonPkg.Driver{},
+		MainTagName: "json",
+	})
+	if err != nil {
+		t.Error(err)
+		return nil, err
+	}
+
+	buf, err := json.Marshal(samples)
+	if err != nil {
+		t.Error(err)
+		return nil, err //nolint:wrapcheck
+	}
+	unmarshalList := []any{}
+	err = json.Unmarshal(buf, &unmarshalList)
+	if err != nil {
+		t.Error(err)
+		return nil, err //nolint:wrapcheck
+	}
+	list := []shared.Value{}
+	for _, entry := range unmarshalList {
+		list = append(list, jsonPkg.Driver{}.WrapValue(entry))
+	}
+	return deserializer.DeserializeList(list) //nolint:wrapcheck
+}
 func twoWays[T any](t *testing.T, sample T) (*T, error) {
 	return twoWaysGeneric[T, T](t, sample)
+}
+
+func TestMissingOptions(t *testing.T) {
+	var err error
+
+	_, err = deserialize.MakeMapDeserializer[SimpleStruct](deserialize.Options{})
+	assert.ErrorContains(t, err, "missing option MainTagName")
+
+	_, err = deserialize.MakeKVListDeserializer[SimpleStruct](deserialize.Options{})
+	assert.ErrorContains(t, err, "missing option MainTagName")
+
+	_, err = deserialize.MakeMapDeserializer[SimpleStruct](deserialize.Options{})
+	assert.ErrorContains(t, err, "missing option MainTagName")
+
+	_, err = deserialize.MakeMapDeserializer[SimpleStruct](deserialize.Options{
+		MainTagName: "foo",
+	})
+	assert.ErrorContains(t, err, "please specify an unmarshaler")
+
+	_, err = deserialize.MakeKVListDeserializer[SimpleStruct](deserialize.Options{
+		MainTagName: "foo",
+	})
+	assert.ErrorContains(t, err, "please specify an unmarshaler")
+
+	_, err = deserialize.MakeMapDeserializer[SimpleStruct](deserialize.Options{
+		MainTagName: "foo",
+	})
+	assert.ErrorContains(t, err, "please specify an unmarshaler")
 }
 
 func TestDeserializeMapBufAndString(t *testing.T) {
@@ -134,6 +195,17 @@ func TestDeserializeSimpleStruct(t *testing.T) {
 	after, err := twoWays[SimpleStruct](t, before)
 	assert.NilError(t, err)
 	assert.Equal(t, *after, before, "We should have recovered the same struct")
+}
+
+func TestDeserializeSimpleStructList(t *testing.T) {
+	before := []SimpleStruct{
+		{
+			SomeString: "THIS IS A TEST",
+		},
+	}
+	after, err := twoWaysList[SimpleStruct](t, before)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, after, before)
 }
 
 // Test with all primitive types.
@@ -206,10 +278,7 @@ func TestDeserializeDeepMissingField(t *testing.T) {
 }
 
 func TestDeserializeSimpleArray(t *testing.T) {
-	array := make([]string, 3)
-	array[0] = "one"
-	array[1] = "two"
-	array[2] = "three"
+	array := []string{"one", "ttwo", "three"}
 	before := SimpleArrayStruct{
 		SomeArray: array,
 	}
@@ -224,10 +293,7 @@ func TestDeserializeSimpleArray(t *testing.T) {
 }
 
 func TestDeserializeArrayOfStruct(t *testing.T) {
-	array := make([]SimpleStruct, 3)
-	array[0] = SimpleStruct{"one"}
-	array[1] = SimpleStruct{"two"}
-	array[2] = SimpleStruct{"three"}
+	array := []SimpleStruct{{"one"}, {"two"}, {"three"}}
 	before := ArrayOfStructs{
 		SomeArray: array,
 	}
@@ -270,10 +336,9 @@ func TestValidationFailureFieldField(t *testing.T) {
 }
 
 func TestValidationFailureArray(t *testing.T) {
-	array := make([]ValidatedStruct, 1)
-	array[0] = ValidatedStruct{
+	array := []ValidatedStruct{{
 		SomeEmail: "someone+example.com",
-	}
+	}}
 	before := Array[ValidatedStruct]{
 		Data: array,
 	}
@@ -648,13 +713,11 @@ type NestedSliceWithOrMethod struct {
 }
 
 func (NestedSliceWithOrMethod) MakeSimpleSlice() ([]SimpleStruct, error) {
-	result := make([]SimpleStruct, 2)
-	result[0] = SimpleStruct{
+	result := []SimpleStruct{{
 		SomeString: "I have been made 1",
-	}
-	result[1] = SimpleStruct{
+	}, {
 		SomeString: "I have been made 2",
-	}
+	}}
 	return result, nil
 }
 
