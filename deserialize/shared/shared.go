@@ -1,6 +1,9 @@
 package shared
 
-import "reflect"
+import (
+	"reflect"
+	"strconv"
+)
 
 // A value in a dictionary.
 //
@@ -31,11 +34,97 @@ type Driver interface {
 	// deserialization interface.
 	ShouldUnmarshal(reflect.Type) bool
 
-	Dict([]byte) (Dict, error)
-
 	// Perform unmarshaling for a value.
-	Unmarshal([]byte, *any) error
+	Unmarshal(any, *any) error
 
 	// Wrap a basic value as a `Value`.
 	WrapValue(any) Value
+}
+
+// A parser for strings into primitive values.
+type Parser func(source string) (any, error)
+
+func LookupParser(fieldType reflect.Type) *Parser {
+	var result *Parser
+	switch fieldType.Kind() {
+	case reflect.Bool:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseBool(source) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Float32:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseFloat(source, 32) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Float64:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseFloat(source, 64) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Int:
+		var p Parser = func(source string) (any, error) {
+			return strconv.Atoi(source) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Int8:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseInt(source, 10, 8) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Int16:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseInt(source, 10, 16) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Int32:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseInt(source, 10, 32) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Int64:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseInt(source, 10, 64) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Uint:
+		var p Parser = func(source string) (any, error) {
+			// `uint` size is not specified, we'll try with 64 bits.
+			return strconv.ParseUint(source, 10, 64) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Uint8:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseUint(source, 10, 8) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Uint16:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseUint(source, 10, 16) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Uint32:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseUint(source, 10, 32) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.Uint64:
+		var p Parser = func(source string) (any, error) {
+			return strconv.ParseUint(source, 10, 64) //nolint:wrapcheck
+		}
+		result = &p
+	case reflect.String:
+		var p Parser = func(source string) (any, error) {
+			return source, nil
+		}
+		result = &p
+	default:
+		return nil
+	}
+	return result
+}
+
+// A type that can be deserialized from a shared.Dict.
+type UnmarshalDict interface {
+	UnmarshalDict(Dict) error
 }

@@ -88,24 +88,30 @@ func (u Driver) ShouldUnmarshal(typ reflect.Type) bool {
 	return false
 }
 
-// Deserialize to a KVList dict.
-//
-// You probably won't ever need to call this method.
-func (u Driver) Dict(buf []byte) (shared.Dict, error) {
-	dict := make(KVList)
-	var dictAny any = dict
-	err := u.Unmarshal(buf, &dictAny)
-	if err != nil {
-		return nil, err //nolint:wrapcheck
-	}
-	return dict, nil
-}
-
 // Perform unmarshaling.
-func (u Driver) Unmarshal(buf []byte, out *any) (err error) {
-	if dict, ok := (*out).(*shared.Dict); ok {
-		return json.Unmarshal(buf, &dict) //nolint:wrapcheck
+func (u Driver) Unmarshal(in any, out *any) (err error) {
+	var buf []byte
+	switch typed := in.(type) {
+	case string:
+		buf = []byte(typed)
+	case []byte:
+		buf = typed
+	case Value:
+		return u.Unmarshal(typed.wrapped, out)
+	case KVList:
+		if reflect.TypeOf(out).Elem() == kvList {
+			*out = typed
+			return nil
+		}
+		// Sadly, at this stage, we need to reserialize.
+		buf, err = json.Marshal(typed)
+		if err != nil {
+			return fmt.Errorf("internal error while deserializing: \n\t * %w", err)
+		}
+	default:
+		return fmt.Errorf("expected a string, got %s", in)
 	}
+
 	if unmarshal, ok := (*out).(Unmarshaler); ok {
 		return unmarshal.Unmarshal(buf) //nolint:wrapcheck
 	}
