@@ -2,6 +2,7 @@
 package deserialize_test
 
 import (
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/uuid"
 	"github.com/pasqal-io/godasse/deserialize"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
 	"github.com/pasqal-io/godasse/deserialize/kvlist"
@@ -1225,8 +1227,8 @@ type StructWithTime struct {
 func TestDeserializingWithPreinitializer(t *testing.T) {
 	date := time.Date(2000, 01, 01, 01, 01, 01, 01, time.UTC)
 	sample := StructWithTime{
-		Field:  StructThatCannotBeDeserialized{},
-		Field2: StructThatCannotBeDeserialized2{},
+		Field:  StructThatCannotBeDeserialized{private: false},
+		Field2: StructThatCannotBeDeserialized2{private: false},
 		Field3: date,
 	}
 	result, err := twoWays[StructWithTime](t, sample)
@@ -1235,3 +1237,31 @@ func TestDeserializingWithPreinitializer(t *testing.T) {
 }
 
 // ------
+
+// ------ Test that we can deserialize uuid
+
+type TextUnmarshalerUUID uuid.UUID
+
+func (t *TextUnmarshalerUUID) UnmarshalText(source []byte) error {
+	result, err := uuid.Parse(string(source))
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	*t = TextUnmarshalerUUID(result)
+	return nil
+}
+
+var _ encoding.TextUnmarshaler = &TextUnmarshalerUUID{}
+
+type StructWithUUID struct {
+	Field TextUnmarshalerUUID
+}
+
+func TestDeserializeUUID(t *testing.T) {
+	sample := StructWithUUID{
+		Field: TextUnmarshalerUUID(uuid.New()),
+	}
+	result, err := twoWays[StructWithUUID](t, sample)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, result, &sample)
+}

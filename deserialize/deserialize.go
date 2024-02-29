@@ -803,7 +803,7 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 			// Simply deserialize.
 			var ok bool
 			if input, ok = inValue.AsSlice(); !ok {
-				return fmt.Errorf("error while deserializing %s[]: expected an array", fieldType)
+				return fmt.Errorf("error while deserializing %s: expected an array", fieldType)
 			}
 		case isEmptyDefault:
 			// Nothing to deserialize, but we are allowed to default to an empty array.
@@ -1067,41 +1067,70 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 //   - `tagName` the name of tags to use for field renamings, e.g. `query`;
 //   - `tags` the table of tags for this field.
 func makeFieldDeserializerFromReflect(fieldPath string, fieldType reflect.Type, options staticOptions, tags *tagsPkg.Tags, container reflect.Value, wasPreinitialized bool) (reflectDeserializer, error) {
-	var result reflectDeserializer
+	var structured reflectDeserializer
 	var err error
 	switch fieldType.Kind() {
 	case reflect.Pointer:
-		result, err = makePointerDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+		structured, err = makePointerDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 	case reflect.Array:
 		fallthrough
 	case reflect.Slice:
 		if options.allowNested {
-			result, err = makeSliceDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+			structured, err = makeSliceDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
 			return nil, fmt.Errorf("this type of extractor does not support arrays/slices")
 		}
 	case reflect.Struct:
 		if options.allowNested {
-			result, err = makeStructDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+			structured, err = makeStructDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
 			return nil, fmt.Errorf("this type of extractor does not support nested structs")
 		}
 	case reflect.Map:
 		if options.allowNested {
-			result, err = makeMapDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+			structured, err = makeMapDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
 			return nil, fmt.Errorf("this type of extractor does not support nested maps")
 		}
 	default:
-		// If it's not a struct, an array, a slice or a pointer, well, it's probably something flat.
-		//
-		// We'll let `makeFlatFieldDeserializer` detect whether we can generate a deserializer for it.
-		result, err = makeFlatFieldDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+		// We'll have to try with a flat field deserializer (see below).
 	}
 	if err != nil {
 		return nil, fmt.Errorf("could not generate a deserializer for %s with type %s:\n\t * %w", fieldPath, typeName(fieldType), err)
 	}
-	return result, nil
+
+	// Case 1: We already have a deserializer, but for some reason, we could end up with, say, a string
+	// instead of the data structure we hope for (that's what happens with `uuid.UUID`).
+	//
+	// Case 2: We don't have a deserializer yet, because the data is flat (string, int, etc.)
+	//
+	// In either case, prepare a flat deserializer.
+	flat, err2 := makeFlatFieldDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+	if structured == nil {
+		if err2 == nil {
+			// Alright, we have a flat field deserializer and that's the only way we can deserialize this structure.
+			return flat, nil
+		}
+		// Neither structured deserializer nor flat field deserializer, we can't deserialize at all.
+		return nil, fmt.Errorf("could not generate a deserializer for %s with type %s:\n\t * %w", fieldPath, typeName(fieldType), err2)
+	}
+	if err2 != nil {
+		// We have a structured deserializer and that's the only way we can deserialize this structure.
+		return structured, nil
+	}
+	// We have both a flat and a structured deserializer. Need to try both!
+	var combined reflectDeserializer = func(slot *reflect.Value, data shared.Value) error {
+		err := structured(slot, data)
+		if err == nil {
+			return nil
+		}
+		err2 := flat(slot, data)
+		if err2 == nil {
+			return nil
+		}
+		return err
+	}
+	return combined, nil
 }
 
 // Return a (mostly) human-readable type name for a Go type.
