@@ -2,6 +2,7 @@
 package json
 
 import (
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,13 +142,26 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 
 	// Attempt to deserialize as a `json.Unmarshaler`.
 	if unmarshal, ok := (*out).(json.Unmarshaler); ok {
-		return unmarshal.UnmarshalJSON(buf) //nolint:wrapcheck
+		err = unmarshal.UnmarshalJSON(buf)
+	} else {
+		err = json.Unmarshal(buf, out)
 	}
-	err = json.Unmarshal(buf, out)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal '%s': \n\t * %w", buf, err)
+	if err == nil {
+		// Basic JSON decoding worked, let's go with it.
+		return nil
 	}
-	return nil
+	// But sometimes, things aren't that nice. For instance, time.Time serializes
+	// itself as an unencoded string, but its UnmarshalJSON expects an encoded string.
+	// Just in case, let's try again with UnmarshalText.
+	if textUnmarshaler, ok := (*out).(encoding.TextUnmarshaler); ok {
+		err2 := textUnmarshaler.UnmarshalText(buf)
+		if err2 == nil {
+			// Success! Let's use that result.
+			return nil
+		}
+		return fmt.Errorf("failed to unmarshal '%s' either from JSON or from text: \n\t * %w\n\t * and %w", buf, err, err2)
+	}
+	return fmt.Errorf("failed to unmarshal '%s': \n\t * %w", buf, err)
 }
 
 func (u Driver) WrapValue(wrapped any) shared.Value {
