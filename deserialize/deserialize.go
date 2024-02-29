@@ -948,13 +948,14 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 	var unmarshaler *func(any) (any, error)
 	if options.unmarshaler.ShouldUnmarshal(fieldType) {
 		u := func(source any) (any, error) {
-			result := reflect.New(fieldType).Interface()
-			err := options.unmarshaler.Unmarshal(source, &result)
+			ptrResult := reflect.New(fieldType)
+			anyResult := ptrResult.Interface()
+			err := options.unmarshaler.Unmarshal(source, &anyResult)
 			if err != nil {
 				err = fmt.Errorf("invalid data at, expected to be able to parse a %s:\n\t * %w", typeName, err)
 				return nil, err
 			}
-			return result, nil
+			return ptrResult.Elem().Interface(), nil
 		}
 		unmarshaler = &u
 	}
