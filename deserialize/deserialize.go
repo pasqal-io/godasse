@@ -491,14 +491,14 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 		// By Go convention, a field with lower-case name or with a publicFieldName of "-" is private and
 		// should not be parsed.
 		isPublic := (*publicFieldName != "-") && fieldNativeExported
-		if !isPublic && !initializationData.willPreinitialize {
-			return nil, fmt.Errorf("struct %s contains a field \"%s\" that is not public, you should either make it public or specify an initializer with `Initializer` or `UnmarshalJSON`", path, fieldNativeName)
+		if !isPublic && !initializationData.willPreinitialize && !wasPreInitialized {
+			return nil, fmt.Errorf("struct %s contains a field \"%s\" that is not public and not pre-initialized, you should either make it public or specify an initializer with `Initializer` or `UnmarshalJSON`", path, fieldNativeName)
 		}
 
 		fieldPath := fmt.Sprint(path, ".", *publicFieldName)
 
 		var fieldContentDeserializer reflectDeserializer
-		fieldContentDeserializer, err = makeFieldDeserializerFromReflect(fieldPath, fieldType, options, &tags, selfContainer, initializationData.willPreinitialize)
+		fieldContentDeserializer, err = makeFieldDeserializerFromReflect(fieldPath, fieldType, options, &tags, selfContainer, initializationData.willPreinitialize || wasPreInitialized)
 		if err != nil {
 			return nil, err
 		}
@@ -785,7 +785,7 @@ func makeSliceDeserializer(fieldPath string, fieldType reflect.Type, options sta
 	subContainer := reflect.New(fieldType).Elem()
 
 	// Prepare a deserializer for elements in this slice.
-	childPreinitialized := tags.IsPreinitialized()
+	childPreinitialized := wasPreinitialized || tags.IsPreinitialized()
 	elementDeserializer, err := makeFieldDeserializerFromReflect(arrayPath, fieldType.Elem(), options, &subTags, subContainer, childPreinitialized)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate a deserializer for %s\n\t * %w", fieldPath, err)
@@ -868,7 +868,7 @@ func makePointerDeserializer(fieldPath string, fieldType reflect.Type, options s
 	elemType := fieldType.Elem()
 	subTags := tagsPkg.Empty()
 	subContainer := reflect.New(fieldType).Elem()
-	childPreinitialized := tags.IsPreinitialized()
+	childPreinitialized := wasPreinitialized || tags.IsPreinitialized()
 	elementDeserializer, err := makeFieldDeserializerFromReflect(ptrPath, fieldType.Elem(), options, &subTags, subContainer, childPreinitialized)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate a deserializer for %s\n\t * %w", fieldPath, err)

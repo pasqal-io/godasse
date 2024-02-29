@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pasqal-io/godasse/deserialize"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
@@ -1199,3 +1200,33 @@ func TestSupportBothUnmarshalerAndDictInitializer(t *testing.T) {
 }
 
 // -----
+
+// ----- Test that we can deserialize a struct witha field that should not be deserializable if we have some kind of pre-initializer.
+
+type StructWithTime struct {
+	Field  time.Time `initialized:"true"`
+	Field2 StructWithTimeInitializer
+}
+
+type StructWithTimeInitializer struct {
+	Field time.Time
+}
+
+func (*StructWithTimeInitializer) Initialize() error {
+	return nil
+}
+
+func TestDeserializingWithPreinitializer(t *testing.T) {
+	date := time.Date(2000, 01, 01, 01, 01, 01, 01, time.UTC)
+	sample := StructWithTime{
+		Field: date,
+		Field2: StructWithTimeInitializer{
+			Field: date,
+		},
+	}
+	result, err := twoWays[StructWithTime](t, sample)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, result, &sample)
+}
+
+// ------
