@@ -488,17 +488,19 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options st
 			return nil, fmt.Errorf("struct %s contains a field \"%s\" that has both a `default` and a `orMethod` declaration. Please specify only one", path, fieldNativeName)
 		}
 
+		willPreinitialize := initializationData.willPreinitialize || wasPreInitialized || tags.IsPreinitialized()
+
 		// By Go convention, a field with lower-case name or with a publicFieldName of "-" is private and
 		// should not be parsed.
 		isPublic := (*publicFieldName != "-") && fieldNativeExported
-		if !isPublic && !initializationData.willPreinitialize && !wasPreInitialized {
+		if !isPublic && !willPreinitialize {
 			return nil, fmt.Errorf("struct %s contains a field \"%s\" that is not public and not pre-initialized, you should either make it public or specify an initializer with `Initializer` or `UnmarshalJSON`", path, fieldNativeName)
 		}
 
 		fieldPath := fmt.Sprint(path, ".", *publicFieldName)
 
 		var fieldContentDeserializer reflectDeserializer
-		fieldContentDeserializer, err = makeFieldDeserializerFromReflect(fieldPath, fieldType, options, &tags, selfContainer, initializationData.willPreinitialize || wasPreInitialized)
+		fieldContentDeserializer, err = makeFieldDeserializerFromReflect(fieldPath, fieldType, options, &tags, selfContainer, willPreinitialize)
 		if err != nil {
 			return nil, err
 		}
@@ -992,7 +994,12 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 			// We have all the data we need, proceed.
 			input = inValue.Interface()
 		case wasPreinitialized:
-			input = outPtr.Interface()
+			if outPtr.CanInterface() {
+				input = outPtr.Interface()
+			} else {
+				// This is a private field that was already initialized, nothing to do here.
+				return nil
+			}
 		case defaultValue != nil:
 			input = defaultValue
 		case orMethod != nil:

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/pasqal-io/godasse/deserialize"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
 	"github.com/pasqal-io/godasse/deserialize/kvlist"
@@ -1201,32 +1202,36 @@ func TestSupportBothUnmarshalerAndDictInitializer(t *testing.T) {
 
 // -----
 
-// ----- Test that we can deserialize a struct witha field that should not be deserializable if we have some kind of pre-initializer.
+// ----- Test that we can deserialize a struct with a field that should not be deserializable if we have some kind of pre-initializer.
+
+type StructThatCannotBeDeserialized struct {
+	private bool
+}
+
+type StructThatCannotBeDeserialized2 struct {
+	private bool
+}
+
+func (*StructThatCannotBeDeserialized2) Initialize() error {
+	return nil
+}
 
 type StructWithTime struct {
-	Field  time.Time `initialized:"true"`
-	Field2 StructWithTimeInitializer
-}
-
-type StructWithTimeInitializer struct {
-	Field time.Time
-}
-
-func (*StructWithTimeInitializer) Initialize() error {
-	return nil
+	Field  StructThatCannotBeDeserialized `initialized:"true"`
+	Field2 StructThatCannotBeDeserialized2
+	Field3 time.Time
 }
 
 func TestDeserializingWithPreinitializer(t *testing.T) {
 	date := time.Date(2000, 01, 01, 01, 01, 01, 01, time.UTC)
 	sample := StructWithTime{
-		Field: date,
-		Field2: StructWithTimeInitializer{
-			Field: date,
-		},
+		Field:  StructThatCannotBeDeserialized{},
+		Field2: StructThatCannotBeDeserialized2{},
+		Field3: date,
 	}
 	result, err := twoWays[StructWithTime](t, sample)
 	assert.NilError(t, err)
-	assert.DeepEqual(t, result, &sample)
+	assert.DeepEqual(t, result, &sample, cmpopts.IgnoreUnexported(StructThatCannotBeDeserialized{}, StructThatCannotBeDeserialized2{}))
 }
 
 // ------
