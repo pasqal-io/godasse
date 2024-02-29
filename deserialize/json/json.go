@@ -81,6 +81,7 @@ var dictionary = reflect.TypeOf(make(JSON, 0))
 
 // The interface for `json.Unmarshaler`.
 var unmarshaler = reflect.TypeOf(new(json.Unmarshaler)).Elem()
+var textUnmarshaler = reflect.TypeOf(new(encoding.TextUnmarshaler)).Elem()
 
 // Determine whether we should call the driver to unmarshal values
 // of this type from []byte.
@@ -94,10 +95,8 @@ func (u Driver) ShouldUnmarshal(typ reflect.Type) bool {
 	if typ.ConvertibleTo(dictionary) {
 		return true
 	}
-	if reflect.PointerTo(typ).ConvertibleTo(unmarshaler) {
-		return true
-	}
-	return false
+	ptr := reflect.PointerTo(typ)
+	return ptr.ConvertibleTo(unmarshaler) || ptr.ConvertibleTo(textUnmarshaler)
 }
 
 // Perform unmarshaling.
