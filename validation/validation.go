@@ -62,13 +62,15 @@ func (v Error) Error() string {
 	for cursor != nil {
 		switch cursor.kind {
 		case kindField:
-			buf = append(buf, fmt.Sprint(cursor.entry))
+			buf = append(buf, fmt.Sprint(".", cursor.entry))
 		case kindIndex:
 			buf = append(buf, fmt.Sprintf("[%d]", cursor.entry))
 		case kindKey:
 			buf = append(buf, fmt.Sprintf("[>> %v <<]", cursor.entry))
 		case kindValue:
 			buf = append(buf, fmt.Sprintf("[%v]", cursor.entry))
+		case kindRoot:
+			buf = append(buf, fmt.Sprint(cursor.entry))
 		case kindInterface:
 			// Keep buf unchanged.
 		case kindDereference:
@@ -79,9 +81,6 @@ func (v Error) Error() string {
 	serialized := ""
 	for i := len(buf) - 1; i >= 0; i-- {
 		serialized += buf[i]
-	}
-	if serialized == "" {
-		serialized = "root" //nolint:ineffassign
 	}
 	return fmt.Sprintf("validation error at %s:\n\t * %s", buf, v.wrapped.Error())
 }
@@ -97,6 +96,8 @@ func (v Error) Unwrap() error {
 type entryKind string
 
 const (
+	kindRoot entryKind = "ROOT"
+
 	// Visiting a field.
 	kindField entryKind = "FIELD"
 
@@ -221,6 +222,11 @@ func validateReflect(path *path, value reflect.Value) error {
 	return nil
 }
 func Validate[T any](value *T) error {
+	root := path{
+		prev:  nil,
+		kind:  kindRoot,
+		entry: fmt.Sprintf("%T", *value),
+	}
 	reflected := reflect.ValueOf(value)
-	return validateReflect(nil, reflected)
+	return validateReflect(&root, reflected)
 }
