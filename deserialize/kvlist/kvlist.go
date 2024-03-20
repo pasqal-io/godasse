@@ -1,7 +1,7 @@
 package kvlist
 
 import (
-	"encoding/json"
+	"encoding"
 	"fmt"
 	"reflect"
 
@@ -69,8 +69,8 @@ type Unmarshaler interface {
 // The type KVList.
 var kvList = reflect.TypeOf(make(KVList, 0))
 
-// The interface `Unmarshaler`.
-var unmarshaler = reflect.TypeOf(new(json.Unmarshaler)).Elem()
+// The interface `TextUnmarshaler`.
+var textUnmarshaler = reflect.TypeOf(new(encoding.TextUnmarshaler)).Elem()
 
 // Determine whether we should call the driver to unmarshal values
 // of this type from []byte.
@@ -82,7 +82,10 @@ func (u Driver) ShouldUnmarshal(typ reflect.Type) bool {
 	if typ.ConvertibleTo(kvList) {
 		return true
 	}
-	if typ.ConvertibleTo(unmarshaler) {
+	if typ.Implements(textUnmarshaler) || reflect.PointerTo(typ).Implements(textUnmarshaler) {
+		return true
+	}
+	if typ.ConvertibleTo(textUnmarshaler) {
 		return true
 	}
 	return false
@@ -96,6 +99,12 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 		buf = []byte(typed)
 	case []byte:
 		buf = typed
+	case []string:
+		if len(typed) == 1 {
+			buf = []byte(typed[0])
+		} else {
+			return fmt.Errorf("cannot deserialize []string in this context")
+		}
 	case Value:
 		return u.Unmarshal(typed.wrapped, out)
 	case KVList:
@@ -103,17 +112,13 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 			*out = typed
 			return nil
 		}
-		// Sadly, at this stage, we need to reserialize.
-		buf, err = json.Marshal(typed)
-		if err != nil {
-			return fmt.Errorf("internal error while deserializing: \n\t * %w", err)
-		}
+		return fmt.Errorf("cannot deserialize map[string][]string in this context")
 	default:
 		return fmt.Errorf("expected a string, got %s", in)
 	}
 
-	if unmarshal, ok := (*out).(Unmarshaler); ok {
-		return unmarshal.Unmarshal(buf) //nolint:wrapcheck
+	if unmarshal, ok := (*out).(encoding.TextUnmarshaler); ok {
+		return unmarshal.UnmarshalText(buf) //nolint:wrapcheck
 	}
 	return fmt.Errorf("this type cannot be deserialized")
 }
