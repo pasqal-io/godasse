@@ -127,12 +127,29 @@ func JSONOptions(root string) Options {
 
 // A preset fit for consuming Queries.
 //
+// The tag name is `query`.
+//
 // Params:
 //   - root A human-readable root (e.g. the name of the endpoint). Used only
 //     for error reporting. `""` is a perfectly acceptable root.
 func QueryOptions(root string) Options {
 	return Options{
 		MainTagName: "query",
+		RootPath:    root,
+		Unmarshaler: kvlist.Driver{},
+	}
+}
+
+// A preset fit for consuming Paths.
+//
+// The tag name is `path`.
+//
+// Params:
+//   - root A human-readable root (e.g. the name of the endpoint). Used only
+//     for error reporting. `""` is a perfectly acceptable root.
+func PathOptions(root string) Options {
+	return Options{
+		MainTagName: "path",
 		RootPath:    root,
 		Unmarshaler: kvlist.Driver{},
 	}
@@ -940,6 +957,9 @@ func makePointerDeserializer(fieldPath string, fieldType reflect.Type, options s
 //   - `tags` the table of tags for this field.
 func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options staticOptions, tags *tagsPkg.Tags, container reflect.Value, wasPreinitialized bool) (reflectDeserializer, error) {
 	typeName := typeName(fieldType)
+	if typeName == "" {
+		typeName = fieldPath
+	}
 
 	// A parser in case we receive our data as a string.
 	parser := shared.LookupParser(fieldType)
@@ -1020,42 +1040,61 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 		}
 
 		// Type check: can our value convert to the expected type?
+
 		reflectedInput = reflect.ValueOf(input)
-		ok := reflectedInput.CanConvert(fieldType)
-		if !ok {
-			// The input cannot be converted?
-			//
-			// Perhaps we can fix it.
-			recovered := false
-			var parsed any
-			if parser != nil {
-				if inputString, ok := input.(string); ok {
-					// The input is represented as a string, but we're not looking for a
-					// string. This can happen e.g. for queries or paths, for which
-					// everything is a string, or for json bodies, in case of client error.
-					//
-					// Regardless, let's try and convert.
-					parsed, err = (*parser)(inputString)
+
+		if input == nil {
+			// Case 1: we're dealing with `nil`. In such a case, `CanConvert`, `Convert` and `Set`
+			// panic, so we need to do things manually.
+			switch fieldType.Kind() {
+			case reflect.Pointer:
+				fallthrough
+			case reflect.Interface:
+				// Nothing to do.
+				outPtr.SetZero()
+			default:
+				return fmt.Errorf("invalid value at %s, expected %s, got <nil>", fieldPath, typeName)
+			}
+		} else {
+			// Case 2: we're not dealing with `nil`. In such a case, we'll gently ask Go to pretty
+			// please `Convert` the input.
+			ok := reflectedInput.CanConvert(fieldType)
+			if !ok {
+				// The input cannot be converted?
+				//
+				// Perhaps we can fix it.
+				recovered := false
+				var parsed any
+				if parser != nil {
+					if inputString, ok := input.(string); ok {
+						// The input is represented as a string, but we're not looking for a
+						// string. This can happen e.g. for queries or paths, for which
+						// everything is a string, or for json bodies, in case of client error.
+						//
+						// Regardless, let's try and convert.
+						parsed, err = (*parser)(inputString)
+						if err == nil {
+							recovered = true
+						}
+					}
+				}
+				if !recovered && unmarshaler != nil {
+					parsed, err = (*unmarshaler)(input)
 					if err == nil {
 						recovered = true
 					}
 				}
-			}
-			if !recovered && unmarshaler != nil {
-				parsed, err = (*unmarshaler)(input)
-				if err == nil {
-					recovered = true
+				if recovered {
+					input = parsed
+				} else {
+					return fmt.Errorf("invalid value at %s, expected %s, got %v", fieldPath, typeName, input)
 				}
+				reflectedInput = reflect.ValueOf(input)
 			}
-			if recovered {
-				input = parsed
-			} else {
-				return fmt.Errorf("invalid value at %s, expected %s, got %s", fieldPath, typeName, reflectedInput.Type().Name())
-			}
-			reflectedInput = reflect.ValueOf(input)
+			reflectedInput = reflectedInput.Convert(fieldType)
+			outPtr.Set(reflectedInput)
 		}
-		reflectedInput = reflectedInput.Convert(fieldType)
-		outPtr.Set(reflectedInput)
+
 		return nil
 	}
 	return result, nil
@@ -1070,6 +1109,7 @@ func makeFlatFieldDeserializer(fieldPath string, fieldType reflect.Type, options
 func makeFieldDeserializerFromReflect(fieldPath string, fieldType reflect.Type, options staticOptions, tags *tagsPkg.Tags, container reflect.Value, wasPreinitialized bool) (reflectDeserializer, error) {
 	var structured reflectDeserializer
 	var err error
+	var nestError error
 	switch fieldType.Kind() {
 	case reflect.Pointer:
 		structured, err = makePointerDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
@@ -1079,19 +1119,19 @@ func makeFieldDeserializerFromReflect(fieldPath string, fieldType reflect.Type, 
 		if options.allowNested {
 			structured, err = makeSliceDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
-			return nil, fmt.Errorf("this type of extractor does not support arrays/slices")
+			nestError = fmt.Errorf("this type of extractor does not support arrays/slices")
 		}
 	case reflect.Struct:
 		if options.allowNested {
 			structured, err = makeStructDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
-			return nil, fmt.Errorf("this type of extractor does not support nested structs")
+			nestError = fmt.Errorf("this type of extractor does not support nested structs")
 		}
 	case reflect.Map:
 		if options.allowNested {
 			structured, err = makeMapDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
-			return nil, fmt.Errorf("this type of extractor does not support nested maps")
+			nestError = fmt.Errorf("this type of extractor does not support nested maps")
 		}
 	default:
 		// We'll have to try with a flat field deserializer (see below).
@@ -1106,16 +1146,20 @@ func makeFieldDeserializerFromReflect(fieldPath string, fieldType reflect.Type, 
 	// Case 2: We don't have a deserializer yet, because the data is flat (string, int, etc.)
 	//
 	// In either case, prepare a flat deserializer.
-	flat, err2 := makeFlatFieldDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
+	flat, flatError := makeFlatFieldDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 	if structured == nil {
-		if err2 == nil {
+		if flatError == nil {
 			// Alright, we have a flat field deserializer and that's the only way we can deserialize this structure.
 			return flat, nil
 		}
+		if nestError != nil {
+			// We have no flat field deserializer and we had a pending nest error, time to unleash it.
+			return nil, nestError
+		}
 		// Neither structured deserializer nor flat field deserializer, we can't deserialize at all.
-		return nil, fmt.Errorf("could not generate a deserializer for %s with type %s:\n\t * %w", fieldPath, typeName(fieldType), err2)
+		return nil, fmt.Errorf("could not generate a deserializer for %s with type %s:\n\t * %w", fieldPath, typeName(fieldType), flatError)
 	}
-	if err2 != nil {
+	if flatError != nil {
 		// We have a structured deserializer and that's the only way we can deserialize this structure.
 		return structured, nil
 	}
