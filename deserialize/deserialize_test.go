@@ -350,18 +350,6 @@ func TestValidationFailureArray(t *testing.T) {
 	assert.Equal(t, err.Error(), "error while deserializing Array[ValidatedStruct].Data[0]:\n\t * deserialized value Array[ValidatedStruct].Data[] did not pass validation\n\t * Invalid email", "Validation should have caught the error")
 }
 
-func TestKVListDoesNotSupportNesting(t *testing.T) {
-	options := deserialize.QueryOptions("") //nolint:exhaustruct
-	_, err := deserialize.MakeKVListDeserializer[PrimitiveTypesStruct](options)
-	assert.NilError(t, err, "KVList parsing supports simple structurs")
-
-	_, err = deserialize.MakeKVListDeserializer[SimpleArrayStruct](options)
-	assert.Equal(t, err.Error(), "this type of extractor does not support arrays/slices", "KVList parsing does not support nesting")
-
-	_, err = deserialize.MakeKVListDeserializer[Pair[int, Pair[int, int]]](options)
-	assert.Equal(t, err.Error(), "this type of extractor does not support nested structs", "KVList parsing does not support nesting")
-}
-
 func TestKVListSimple(t *testing.T) {
 	options := deserialize.QueryOptions("") //nolint:exhaustruct
 	deserializer, err := deserialize.MakeKVListDeserializer[PrimitiveTypesStruct](options)
@@ -1238,7 +1226,7 @@ func TestDeserializingWithPreinitializer(t *testing.T) {
 
 // ------
 
-// ------ Test that we can deserialize uuid
+// ------ Test that we can deserialize uuid through json.
 
 type TextUnmarshalerUUID uuid.UUID
 
@@ -1257,11 +1245,30 @@ type StructWithUUID struct {
 	Field TextUnmarshalerUUID
 }
 
-func TestDeserializeUUID(t *testing.T) {
+func TestDeserializeUUIDJSON(t *testing.T) {
 	sample := StructWithUUID{
 		Field: TextUnmarshalerUUID(uuid.New()),
 	}
 	result, err := twoWays[StructWithUUID](t, sample)
 	assert.NilError(t, err)
 	assert.DeepEqual(t, result, &sample)
+}
+
+// ------
+
+// ------ Test that we can deserialize uuid through kvlist.
+
+func TestDeserializeUUIDKV(t *testing.T) {
+	sample := StructWithUUID{
+		Field: TextUnmarshalerUUID(uuid.New()),
+	}
+	deserializer, err := deserialize.MakeKVListDeserializer[StructWithUUID](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	kvList := map[string][]string{}
+	kvList["Field"] = []string{uuid.UUID(sample.Field).String()}
+	deserialized, err := deserializer.DeserializeKVList(kvList)
+	assert.NilError(t, err)
+
+	assert.Equal(t, deserialized.Field, sample.Field)
 }
