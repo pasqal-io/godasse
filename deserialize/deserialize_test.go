@@ -535,7 +535,6 @@ func TestStructDefaultValues(t *testing.T) {
 	assert.Equal(t, *result, expected, "Deserialization should have inserted default values")
 }
 
-// Test behavior when parsing default value fails.
 func TestStructDefaultValuesInvalidSyntax(t *testing.T) {
 	type PairWithDefaults[T any, U any] struct {
 		Left  T `default:"{}"`
@@ -543,7 +542,7 @@ func TestStructDefaultValuesInvalidSyntax(t *testing.T) {
 	}
 	_, err := deserialize.MakeMapDeserializer[PairWithDefaults[PairWithDefaults[EmptyStruct, int], int]](deserialize.JSONOptions(""))
 
-	assert.Equal(t, err.Error(), "could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·6,int].Left with type PairWithDefaults[EmptyStruct,int]:\n\t * could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·6,int].Left.Right with type int:\n\t * cannot parse default value at PairWithDefaults[PairWithDefaults[EmptyStruct,int]·6,int].Left.Right\n\t * strconv.Atoi: parsing \"{}\": invalid syntax", "MakeMapDeserializer should have detected an error")
+	assert.Equal(t, err.Error(), "could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left with type PairWithDefaults[EmptyStruct,int]:\n\t * could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right with type int:\n\t * cannot parse default value at PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right\n\t * strconv.Atoi: parsing \"{}\": invalid syntax", "MakeMapDeserializer should have detected an error")
 }
 
 // Check that when we have a default struct of {}, we're still going to
