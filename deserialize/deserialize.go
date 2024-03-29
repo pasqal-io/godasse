@@ -74,6 +74,7 @@ import (
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
 	"github.com/pasqal-io/godasse/deserialize/kvlist"
 	"github.com/pasqal-io/godasse/deserialize/shared"
+	"github.com/pasqal-io/godasse/deserialize/tags"
 	tagsPkg "github.com/pasqal-io/godasse/deserialize/tags"
 	"github.com/pasqal-io/godasse/validation"
 )
@@ -191,17 +192,37 @@ func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 		unmarshaler:     options.Unmarshaler,
 	})
 }
-func MakeMapDeserializerFromReflect(options Options, typ reflect.Type) (MapDeserializer[any], error) {
+func MakeMapDeserializerFromReflect(options Options, typ reflect.Type, tags *tags.Tags) (MapDeserializer[any], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
 		return nil, errors.New("missing option MainTagName")
 	}
-	var placeholder = reflect.New(typ).Elem().Interface()
-	return makeOuterStructDeserializerFromReflect[any](".", staticOptions{
+	var placeholder = reflect.New(typ).Elem()
+	staticOptions := staticOptions{
 		renamingTagName: tagName,
 		allowNested:     true,
 		unmarshaler:     options.Unmarshaler,
-	}, &placeholder, typ)
+	}
+	reflectDeserializer, err := makeFieldDeserializerFromReflect("", typ, staticOptions, tags, placeholder, false)
+
+	if err != nil {
+		return nil, err
+	}
+	return mapDeserializer[any]{
+		deserializer: func(value shared.Dict) (*any, error) {
+			out := reflect.New(typ).Elem()
+			input := value.AsValue()
+			err := reflectDeserializer(&out, input)
+			if err != nil {
+				return nil, err
+			}
+
+			result := out.Interface()
+			return &result, nil
+		},
+		options: staticOptions,
+	}, nil
+
 }
 
 // Create a deserializer from (key, value list).
