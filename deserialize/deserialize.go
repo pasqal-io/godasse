@@ -74,6 +74,7 @@ import (
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
 	"github.com/pasqal-io/godasse/deserialize/kvlist"
 	"github.com/pasqal-io/godasse/deserialize/shared"
+	"github.com/pasqal-io/godasse/deserialize/tags"
 	tagsPkg "github.com/pasqal-io/godasse/deserialize/tags"
 	"github.com/pasqal-io/godasse/validation"
 )
@@ -191,6 +192,40 @@ func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 		unmarshaler:     options.Unmarshaler,
 	})
 }
+func MakeMapDeserializerFromReflect(options Options, typ reflect.Type) (MapDeserializer[any], error) {
+	tagName := options.MainTagName
+	if tagName == "" {
+		return nil, errors.New("missing option MainTagName")
+	}
+	var placeholder = reflect.New(typ).Elem()
+	staticOptions := staticOptions{
+		renamingTagName: tagName,
+		allowNested:     true,
+		unmarshaler:     options.Unmarshaler,
+	}
+
+	noTags := tags.Empty()
+	reflectDeserializer, err := makeFieldDeserializerFromReflect(options.RootPath, typ, staticOptions, &noTags, placeholder, false)
+
+	if err != nil {
+		return nil, err
+	}
+	return mapDeserializer[any]{
+		deserializer: func(value shared.Dict) (*any, error) {
+			out := reflect.New(typ).Elem()
+			input := value.AsValue()
+			err := reflectDeserializer(&out, input)
+			if err != nil {
+				return nil, err
+			}
+
+			result := out.Interface()
+			return &result, nil
+		},
+		options: staticOptions,
+	}, nil
+
+}
 
 // Create a deserializer from (key, value list).
 func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], error) {
@@ -216,6 +251,35 @@ func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], erro
 		return wrapped.deserializer(normalized)
 	}
 	return kvListDeserializer[T]{
+		deserializer: deserializer,
+		options:      innerOptions,
+	}, nil
+}
+func MakeKVDeserializerFromReflect(options Options, typ reflect.Type) (KVListDeserializer[any], error) {
+	tagName := options.MainTagName
+	if tagName == "" {
+		return nil, errors.New("missing option MainTagName")
+	}
+	innerOptions := staticOptions{
+		renamingTagName: tagName,
+		allowNested:     false,
+		unmarshaler:     options.Unmarshaler,
+	}
+	var placeholder = reflect.New(typ).Elem().Interface()
+	wrapped, err := makeOuterStructDeserializerFromReflect[any](".", innerOptions, &placeholder, typ)
+	if err != nil {
+		return nil, err
+	}
+
+	deserializer := func(value kvlist.KVList) (*any, error) {
+		normalized := make(jsonPkg.JSON)
+		err := deListMapReflect(typ, normalized, value, innerOptions)
+		if err != nil {
+			return nil, fmt.Errorf("error attempting to deserialize from a list of entries:\n\t * %w", err)
+		}
+		return wrapped.deserializer(normalized)
+	}
+	return kvListDeserializer[any]{
 		deserializer: deserializer,
 		options:      innerOptions,
 	}, nil
@@ -312,15 +376,13 @@ func (me kvListDeserializer[T]) DeserializeKVList(value kvlist.KVList) (*T, erro
 
 // Convert a `map[string][]string` (as provided e.g. by the query parser) into a `Dict`
 // (as consumed by this parsing mechanism).
-func deListMap[T any](outMap map[string]any, inMap map[string][]string, options staticOptions) error {
-	var fakeValue *T
-	reflectedT := reflect.TypeOf(fakeValue).Elem()
-	if reflectedT.Kind() != reflect.Struct {
-		return fmt.Errorf("cannot implement a MapListDeserializer without a struct, got %s", reflectedT.Name())
+func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string][]string, options staticOptions) error {
+	if typ.Kind() != reflect.Struct {
+		return fmt.Errorf("cannot implement a MapListDeserializer without a struct, got %s", typ.Name())
 	}
 
-	for i := 0; i < reflectedT.NumField(); i++ {
-		field := reflectedT.Field(i)
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
 		tags, err := tagsPkg.Parse(field.Tag)
 		if err != nil {
 			// This probably cannot happen as we have already failed in makeStructDeserializerFromReflect.
@@ -369,13 +431,18 @@ func deListMap[T any](outMap map[string]any, inMap map[string][]string, options 
 			case 1: // One value, we can fit it into a single entry of outMap.
 				outMap[*publicFieldName] = inMap[*publicFieldName][0]
 			default:
-				return fmt.Errorf("cannot fit %d elements into a single entry of field %s.%s", length, reflectedT.Name(), field.Name)
+				return fmt.Errorf("cannot fit %d elements into a single entry of field %s.%s", length, typ.Name(), field.Name)
 			}
 		default:
 			panic("This should not happen")
 		}
 	}
 	return nil
+}
+func deListMap[T any](outMap map[string]any, inMap map[string][]string, options staticOptions) error {
+	var placeholder T
+	reflectedT := reflect.TypeOf(placeholder)
+	return deListMapReflect(reflectedT, outMap, inMap, options)
 }
 
 // A type of deserializers using reflection to perform any conversions.
@@ -392,22 +459,11 @@ var errorInterface = reflect.TypeOf((*error)(nil)).Elem()
 
 const JSON = "json"
 
-// Construct a statically-typed deserializer.
-//
-// Under the hood, this uses the reflectDeserializer.
-//
-//   - `path` a human-readable path (e.g. the name of the endpoint) or "" if you have nothing
-//     useful for human beings;
-//   - `tagName` the name of tags to use for field renamings, e.g. `query`.
-func makeOuterStructDeserializer[T any](path string, options staticOptions) (*mapDeserializer[T], error) {
-	container := new(T) // An uninitialized container, used to extract type information and call initializer methods.
-
+func makeOuterStructDeserializerFromReflect[T any](path string, options staticOptions, container *T, typ reflect.Type) (*mapDeserializer[T], error) {
 	if options.unmarshaler == nil {
 		return nil, errors.New("please specify an unmarshaler")
 	}
 
-	// Pre-check if we're going to perform initialization.
-	typ := reflect.TypeOf(*container)
 	initializationMetadata, err := initializationData(path, typ, options)
 	if err != nil {
 		return nil, err
@@ -460,6 +516,21 @@ func makeOuterStructDeserializer[T any](path string, options staticOptions) (*ma
 		options: options,
 	}
 	return &result, nil
+}
+
+// Construct a statically-typed deserializer.
+//
+// Under the hood, this uses the reflectDeserializer.
+//
+//   - `path` a human-readable path (e.g. the name of the endpoint) or "" if you have nothing
+//     useful for human beings;
+//   - `tagName` the name of tags to use for field renamings, e.g. `query`.
+func makeOuterStructDeserializer[T any](path string, options staticOptions) (*mapDeserializer[T], error) {
+	container := new(T) // An uninitialized container, used to extract type information and call initializer methods.
+
+	// Pre-check if we're going to perform initialization.
+	typ := reflect.TypeOf(*container)
+	return makeOuterStructDeserializerFromReflect[T](path, options, container, typ)
 }
 
 // Construct a dynamically-typed deserializer for structs.
