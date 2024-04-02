@@ -8,19 +8,17 @@ import (
 
 	"github.com/pasqal-io/godasse/deserialize"
 	jsonPkg "github.com/pasqal-io/godasse/deserialize/json"
-	"github.com/pasqal-io/godasse/deserialize/tags"
 	"gotest.tools/v3/assert"
 )
 
 func twoWaysReflect[Input any, Output any](t *testing.T, sample Input) (*Output, error) {
 	var placeholderOutput Output
 	typeOutput := reflect.TypeOf(placeholderOutput)
-	noTags := tags.Empty()
 	deserializer, err := deserialize.MakeMapDeserializerFromReflect(deserialize.Options{
 		Unmarshaler: jsonPkg.Driver{},
 		MainTagName: "json",
 		RootPath:    "",
-	}, typeOutput, &noTags)
+	}, typeOutput)
 	if err != nil {
 		t.Error(err)
 		return nil, err //nolint:wrapcheck

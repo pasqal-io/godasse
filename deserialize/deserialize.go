@@ -192,7 +192,7 @@ func MakeMapDeserializer[T any](options Options) (MapDeserializer[T], error) {
 		unmarshaler:     options.Unmarshaler,
 	})
 }
-func MakeMapDeserializerFromReflect(options Options, typ reflect.Type, tags *tags.Tags) (MapDeserializer[any], error) {
+func MakeMapDeserializerFromReflect(options Options, typ reflect.Type) (MapDeserializer[any], error) {
 	tagName := options.MainTagName
 	if tagName == "" {
 		return nil, errors.New("missing option MainTagName")
@@ -203,7 +203,9 @@ func MakeMapDeserializerFromReflect(options Options, typ reflect.Type, tags *tag
 		allowNested:     true,
 		unmarshaler:     options.Unmarshaler,
 	}
-	reflectDeserializer, err := makeFieldDeserializerFromReflect("", typ, staticOptions, tags, placeholder, false)
+
+	noTags := tags.Empty()
+	reflectDeserializer, err := makeFieldDeserializerFromReflect(options.RootPath, typ, staticOptions, &noTags, placeholder, false)
 
 	if err != nil {
 		return nil, err
@@ -271,7 +273,7 @@ func MakeKVDeserializerFromReflect(options Options, typ reflect.Type) (KVListDes
 
 	deserializer := func(value kvlist.KVList) (*any, error) {
 		normalized := make(jsonPkg.JSON)
-		err := deListMap[any](normalized, value, innerOptions)
+		err := deListMapReflect(typ, normalized, value, innerOptions)
 		if err != nil {
 			return nil, fmt.Errorf("error attempting to deserialize from a list of entries:\n\t * %w", err)
 		}
@@ -374,15 +376,13 @@ func (me kvListDeserializer[T]) DeserializeKVList(value kvlist.KVList) (*T, erro
 
 // Convert a `map[string][]string` (as provided e.g. by the query parser) into a `Dict`
 // (as consumed by this parsing mechanism).
-func deListMap[T any](outMap map[string]any, inMap map[string][]string, options staticOptions) error {
-	var fakeValue *T
-	reflectedT := reflect.TypeOf(fakeValue).Elem()
-	if reflectedT.Kind() != reflect.Struct {
-		return fmt.Errorf("cannot implement a MapListDeserializer without a struct, got %s", reflectedT.Name())
+func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string][]string, options staticOptions) error {
+	if typ.Kind() != reflect.Struct {
+		return fmt.Errorf("cannot implement a MapListDeserializer without a struct, got %s", typ.Name())
 	}
 
-	for i := 0; i < reflectedT.NumField(); i++ {
-		field := reflectedT.Field(i)
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
 		tags, err := tagsPkg.Parse(field.Tag)
 		if err != nil {
 			// This probably cannot happen as we have already failed in makeStructDeserializerFromReflect.
@@ -431,13 +431,18 @@ func deListMap[T any](outMap map[string]any, inMap map[string][]string, options 
 			case 1: // One value, we can fit it into a single entry of outMap.
 				outMap[*publicFieldName] = inMap[*publicFieldName][0]
 			default:
-				return fmt.Errorf("cannot fit %d elements into a single entry of field %s.%s", length, reflectedT.Name(), field.Name)
+				return fmt.Errorf("cannot fit %d elements into a single entry of field %s.%s", length, typ.Name(), field.Name)
 			}
 		default:
 			panic("This should not happen")
 		}
 	}
 	return nil
+}
+func deListMap[T any](outMap map[string]any, inMap map[string][]string, options staticOptions) error {
+	var placeholder T
+	reflectedT := reflect.TypeOf(placeholder)
+	return deListMapReflect(reflectedT, outMap, inMap, options)
 }
 
 // A type of deserializers using reflection to perform any conversions.
