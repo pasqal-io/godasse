@@ -374,7 +374,7 @@ func (me kvListDeserializer[T]) DeserializeKVList(value kvlist.KVList) (*T, erro
 	return me.deserializer(value)
 }
 
-// Convert a `map[string][]string` (as provided e.g. by the query parser) into a `Dict`
+// Convert a `map[string] []string` (as provided e.g. by the query parser) into a `Dict`
 // (as consumed by this parsing mechanism).
 func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string][]string, options staticOptions) error {
 	if typ.Kind() != reflect.Struct {
