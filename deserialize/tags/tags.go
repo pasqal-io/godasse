@@ -1,6 +1,7 @@
 package tags
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -52,7 +53,7 @@ func Parse(tag reflect.StructTag) (Tags, error) {
 		}
 		name := string(tag[:i])
 		if name == "" {
-			return Tags{}, fmt.Errorf("invalid tag with empty name")
+			return Tags{}, errors.New("invalid tag with empty name")
 		}
 		if _, exists := tags[name]; exists {
 			return Tags{}, fmt.Errorf("invalid tag, name %s should only be defined once", name)

@@ -69,7 +69,7 @@ func (s *ValidatedStruct) Validate() error {
 	if strings.Contains(s.SomeEmail, "@") {
 		return nil
 	}
-	return fmt.Errorf("Invalid email")
+	return errors.New("Invalid email")
 }
 
 var _ validation.Validator = &ValidatedStruct{} // Type assertion.
@@ -651,7 +651,7 @@ type SimpleStructWithFlatOrMethodError struct {
 }
 
 func (SimpleStructWithFlatOrMethodError) MakeString() (string, error) {
-	return "Test value constructed with a method", fmt.Errorf("This is an error from SimpleStructWithFlatOrMethodError")
+	return "Test value constructed with a method", errors.New("This is an error from SimpleStructWithFlatOrMethodError")
 }
 
 type SimpleStructWithPtrOrMethodError struct {
@@ -659,7 +659,7 @@ type SimpleStructWithPtrOrMethodError struct {
 }
 
 func (SimpleStructWithPtrOrMethodError) MakeString() (*string, error) {
-	return nil, fmt.Errorf("This is an error from SimpleStructWithPtrOrMethodError")
+	return nil, errors.New("This is an error from SimpleStructWithPtrOrMethodError")
 }
 
 type SimpleStructWithSliceOrMethodError struct {
@@ -667,7 +667,7 @@ type SimpleStructWithSliceOrMethodError struct {
 }
 
 func (SimpleStructWithSliceOrMethodError) MakeStringSlice() ([]string, error) {
-	return []string{"Test value constructed with a method"}, fmt.Errorf("This is an error from SimpleStructWithSliceOrMethodError")
+	return []string{"Test value constructed with a method"}, errors.New("This is an error from SimpleStructWithSliceOrMethodError")
 }
 
 type SimpleStructWithMapOrMethodError struct {
@@ -675,7 +675,7 @@ type SimpleStructWithMapOrMethodError struct {
 }
 
 func (SimpleStructWithMapOrMethodError) MakeStringMap() (map[string]string, error) {
-	return map[string]string{"zero": "Test value constructed with a method"}, fmt.Errorf("This is an error from SimpleStructWithMapOrMethodError")
+	return map[string]string{"zero": "Test value constructed with a method"}, errors.New("This is an error from SimpleStructWithMapOrMethodError")
 }
 
 type SimpleStructWithStructOrMethodError struct {
@@ -683,7 +683,7 @@ type SimpleStructWithStructOrMethodError struct {
 }
 
 func (SimpleStructWithStructOrMethodError) MakeSimpleStruct() (SimpleStruct, error) {
-	return SimpleStruct{}, fmt.Errorf("This is an error from SimpleStructWithStructOrMethodError")
+	return SimpleStruct{}, errors.New("This is an error from SimpleStructWithStructOrMethodError")
 }
 
 func TestOrMethodError(t *testing.T) {
@@ -949,7 +949,7 @@ func (s *StructInitializerFaulty) Initialize() error {
 	s.SomeUint16 = 7
 	s.SomeUint32 = 8
 	s.SomeUint64 = 9
-	return fmt.Errorf("Test error")
+	return errors.New("Test error")
 }
 
 var _ validation.Initializer = &StructInitializerFaulty{} // Type assertion.
@@ -981,7 +981,7 @@ type StructUnmarshal struct {
 
 func (su *StructUnmarshal) UnmarshalJSON(source []byte) error {
 	if len(source) == 0 {
-		return fmt.Errorf("Test error: this slice is too short")
+		return errors.New("Test error: this slice is too short")
 	}
 	str := string(source)
 	su.hidden = str
