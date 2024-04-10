@@ -2,6 +2,7 @@ package kvlist
 
 import (
 	"encoding"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -103,7 +104,7 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 		if len(typed) == 1 {
 			buf = []byte(typed[0])
 		} else {
-			return fmt.Errorf("cannot deserialize []string in this context")
+			return errors.New("cannot deserialize []string in this context")
 		}
 	case Value:
 		return u.Unmarshal(typed.wrapped, out)
@@ -112,7 +113,7 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 			*out = typed
 			return nil
 		}
-		return fmt.Errorf("cannot deserialize map[string][]string in this context")
+		return errors.New("cannot deserialize map[string][]string in this context")
 	default:
 		return fmt.Errorf("expected a string, got %s", in)
 	}
@@ -120,7 +121,7 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 	if unmarshal, ok := (*out).(encoding.TextUnmarshaler); ok {
 		return unmarshal.UnmarshalText(buf) //nolint:wrapcheck
 	}
-	return fmt.Errorf("this type cannot be deserialized")
+	return errors.New("this type cannot be deserialized")
 }
 
 func (u Driver) WrapValue(wrapped any) shared.Value {

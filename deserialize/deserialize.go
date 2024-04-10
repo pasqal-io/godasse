@@ -337,7 +337,7 @@ func (me mapDeserializer[T]) DeserializeBytes(source []byte) (*T, error) {
 	}
 	asDict, ok := me.options.unmarshaler.WrapValue(*dict).AsDict()
 	if !ok {
-		return nil, fmt.Errorf("failed to deserialize as a dictionary")
+		return nil, errors.New("failed to deserialize as a dictionary")
 	}
 	return me.deserializer(asDict)
 }
@@ -418,6 +418,8 @@ func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string]
 			fallthrough
 		case reflect.Int64:
 			fallthrough
+		case reflect.Uint:
+			fallthrough
 		case reflect.Uint8:
 			fallthrough
 		case reflect.Uint16:
@@ -490,7 +492,7 @@ func makeOuterStructDeserializerFromReflect[T any](path string, options staticOp
 				initializer, ok := resultAny.(validation.Initializer)
 				var err error
 				if !ok {
-					err = fmt.Errorf("we have already checked that the result can be converted to `Initializer` but conversion has failed")
+					err = errors.New("we have already checked that the result can be converted to `Initializer` but conversion has failed")
 					panic(err)
 				}
 				err = initializer.Initialize()
@@ -764,7 +766,7 @@ func makeMapDeserializerFromReflect(path string, typ reflect.Type, options stati
 		panic(fmt.Errorf("at %s, we see a map type that looks like it can be initialized, that's currently impossible in go", path))
 	}
 
-	subPath := fmt.Sprintf("%s[]", path)
+	subPath := path + "[]"
 	subTags := tagsPkg.Empty()
 	subTyp := typ.Elem()
 	contentDeserializer, err := makeFieldDeserializerFromReflect(subPath, subTyp, options, &subTags, selfContainer, initializationMetadata.willPreinitialize)
@@ -1190,19 +1192,19 @@ func makeFieldDeserializerFromReflect(fieldPath string, fieldType reflect.Type, 
 		if options.allowNested {
 			structured, err = makeSliceDeserializer(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
-			nestError = fmt.Errorf("this type of extractor does not support arrays/slices")
+			nestError = errors.New("this type of extractor does not support arrays/slices")
 		}
 	case reflect.Struct:
 		if options.allowNested {
 			structured, err = makeStructDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
-			nestError = fmt.Errorf("this type of extractor does not support nested structs")
+			nestError = errors.New("this type of extractor does not support nested structs")
 		}
 	case reflect.Map:
 		if options.allowNested {
 			structured, err = makeMapDeserializerFromReflect(fieldPath, fieldType, options, tags, container, wasPreinitialized)
 		} else {
-			nestError = fmt.Errorf("this type of extractor does not support nested maps")
+			nestError = errors.New("this type of extractor does not support nested maps")
 		}
 	default:
 		// We'll have to try with a flat field deserializer (see below).
