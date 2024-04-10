@@ -2,8 +2,8 @@ package deserialize_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/pasqal-io/godasse/deserialize"
@@ -35,20 +35,16 @@ func twoWaysReflect[Input any, Output any](t *testing.T, sample Input) (*Output,
 		t.Error(err)
 		return nil, err //nolint:wrapcheck
 	}
-	deserialized, err := deserializer.DeserializeDict(dict)
+	deserialized := new(Output)
+	reflectDeserialized := reflect.ValueOf(deserialized).Elem()
+	err = deserializer.DeserializeDictTo(dict, &reflectDeserialized)
 	if err != nil {
 		return nil, err //nolint:wrapcheck
 	}
-	typed, ok := (*deserialized).(Output)
-	if !ok {
-		return nil, fmt.Errorf("invalid type after deserailization: expected %s, got %s",
-			typeOutput.Name(),
-			reflect.TypeOf(deserialized).Elem().Name())
-	}
-	return &typed, nil
+	return deserialized, nil
 }
 
-func TestReflectDeserializer(t *testing.T) {
+func TestReflectMapDeserializer(t *testing.T) {
 	type Test struct {
 		String string
 		Int    int
@@ -62,4 +58,31 @@ func TestReflectDeserializer(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert.DeepEqual(t, &sample, out)
+}
+
+func TestReflectKVDeserializer(t *testing.T) {
+	type Test struct {
+		String string
+		Int    int
+	}
+	sample := Test{
+		String: "abc",
+		Int:    123,
+	}
+	deserializer, err := deserialize.MakeKVDeserializerFromReflect(deserialize.Options{
+		Unmarshaler: jsonPkg.Driver{},
+		MainTagName: "json",
+		RootPath:    "",
+	}, reflect.TypeOf(sample))
+
+	assert.NilError(t, err)
+	kvList := map[string][]string{}
+	kvList["String"] = []string{sample.String}
+	kvList["Int"] = []string{strconv.Itoa(sample.Int)}
+
+	deserialized := new(Test)
+	reflectDeserialized := reflect.ValueOf(deserialized).Elem()
+	err = deserializer.DeserializeKVListTo(kvList, &reflectDeserialized)
+	assert.NilError(t, err)
+	assert.Equal(t, *deserialized, sample)
 }
