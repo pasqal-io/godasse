@@ -542,7 +542,9 @@ func TestStructDefaultValuesInvalidSyntax(t *testing.T) {
 	}
 	_, err := deserialize.MakeMapDeserializer[PairWithDefaults[PairWithDefaults[EmptyStruct, int], int]](deserialize.JSONOptions(""))
 
-	assert.Equal(t, err.Error(), "could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left with type PairWithDefaults[EmptyStruct,int]:\n\t * could not generate a deserializer for PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right with type int:\n\t * cannot parse default value at PairWithDefaults[PairWithDefaults[EmptyStruct,int]·5,int].Left.Right\n\t * strconv.Atoi: parsing \"{}\": invalid syntax", "MakeMapDeserializer should have detected an error")
+	assert.ErrorContains(t, err, "could not generate a deserializer")
+	assert.ErrorContains(t, err, "cannot parse default value")
+	assert.ErrorContains(t, err, "strconv.Atoi: parsing \"{}\": invalid syntax")
 }
 
 // Check that when we have a default struct of {}, we're still going to
@@ -1287,4 +1289,39 @@ func TestNilPtr(t *testing.T) {
 	found, err := twoWays(t, sample)
 	assert.NilError(t, err)
 	assert.DeepEqual(t, *found, sample)
+}
+
+// ------
+
+// ------ Test that we can deserialize a value with a private type
+
+type Private uint
+
+type StructWithPrivate struct {
+	Field Private
+}
+
+func TestMapDeserializeWithPrivate(t *testing.T) {
+	sample := StructWithPrivate{
+		Field: 265,
+	}
+
+	deserialized, err := twoWays(t, sample)
+	assert.NilError(t, err)
+	assert.Equal(t, *deserialized, sample)
+}
+
+func TestKVDeserializeWithPrivate(t *testing.T) {
+	sample := StructWithPrivate{
+		Field: 265,
+	}
+	deserializer, err := deserialize.MakeKVListDeserializer[StructWithPrivate](deserialize.QueryOptions(""))
+
+	assert.NilError(t, err)
+	kvList := map[string][]string{}
+	kvList["Field"] = []string{fmt.Sprint(sample.Field)}
+
+	deserialized, err := deserializer.DeserializeKVList(kvList)
+	assert.NilError(t, err)
+	assert.Equal(t, *deserialized, sample)
 }

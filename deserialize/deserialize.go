@@ -418,6 +418,8 @@ func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string]
 			fallthrough
 		case reflect.Int64:
 			fallthrough
+		case reflect.Uint:
+			fallthrough
 		case reflect.Uint8:
 			fallthrough
 		case reflect.Uint16:
