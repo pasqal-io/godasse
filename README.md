@@ -67,12 +67,21 @@ We can generate a JSON deserializer for this request. Usually, this is something
 you do at startup, as it is going to verify a number of important properties.
 
 ```go
+package main
+
+import (
+    "fmt"
+    "github.com/pasqal-io/godasse/deserialize"
+)
+
+type FetchRequest struct {
+    Resource string `json:"resource"`
+    number   uint8  `json:"number"`
+}
+
 func main() {
-    options := godasse.deserialize.Options {
-        // We want to apply the renamings from tag `json`.
-        MainTagName: "json",
-    }
-    deserializer, err := godasse.deserialize.MakeMapDeserializer[FetchRequest](options)
+    options := deserialize.JSONOptions("")
+    deserializer, err := deserialize.MakeMapDeserializer[FetchRequest](options)
     if err != nil {
         panic(err)
     }
@@ -100,7 +109,7 @@ Alright, now our code passes!
 Let's test it
 
 ```go
-deserialized, err := deserializer.DeserializeJSONString(`{
+deserialized, err := deserializer.DeserializeString(`{
     "resource": "/a/b/c",
     "number": 1
 }`)
@@ -120,8 +129,8 @@ fmt.Print("We have deserialized ", *deserialized)
 Now, what happens if we forget a field?
 
 ```go
-deserialized, err := deserializer.DeserializeJSONString(`{
-    "resource": "/a/b/c",
+deserialized, err := deserializer.DeserializeString(`{
+    "resource": "/a/b/c"
 }`)
 
 if err != nil {
@@ -132,7 +141,7 @@ if err != nil {
 Well, this fails with
 
 ```
-    missing primitive value at FetchRequestBasic.number, expected uint8
+    missing primitive value at FetchRequest.number, expected uint8
 ```
 
 If you're using Godasse, that's probably what you expected!
@@ -149,15 +158,15 @@ We'll just amend `FetchRequest` to specify a default value:
 ```go
 type FetchRequest struct {
     Resource string `json:"resource"`
-    Number   uint8  `json:"number"` `default:"1"`
+    Number   uint8  `json:"number" default:"1"`
 }
 ```
 
 Let's test this:
 
 ```go
-deserialized, err := deserializer.DeserializeJSONString(`{
-    "resource": "/a/b/c",
+deserialized, err := deserializer.DeserializeString(`{
+    "resource": "/a/b/c"
 }`)
 
 if err != nil {
@@ -177,15 +186,15 @@ type Options struct {
     // Accept responses that have been generated up to `MaxAgeMS` ms ago.
     //
     // Defaults to 10,000.
-    MaxAgeMS uint32 `json:maxAgeMS` `default:"10000"`
+    MaxAgeMS uint32 `json:"maxAgeMS" default:"10000"`
 }
 
 type AdvancedFetchRequest struct {
     Resource string `json:"resource"`
-    Number   uint8  `json:"number"` `default:"1"`
+    Number   uint8  `json:"number" default:"1"`
 
     // Additional options for fetching (optional).
-    Options  Options `json:"options"` `default:"{}"`
+    Options  Options `json:"options" default:"{}"`
 }
 ```
 
@@ -194,9 +203,13 @@ In this case, if `options` is missing, it will default to `{}`
 specified in `Options`.
 
 ```go
-deserialized, err := deserializer.DeserializeJSONString(`{
-    "resource": "/a/b/c",
+deserialized, err := deserializer.DeserializeString(`{
+    "resource": "/a/b/c"
 }`)
+
+if err != nil {
+    panic(err)
+}
 
 if deserialized.Options.MaxAgeMS != 10000 {
     panic("We should have inserted a default value!")
@@ -226,12 +239,12 @@ type Options struct {
     // Accept responses that have been generated since `MinDateMS`.
     //
     // Defaults to "now minus 10s".
-    MinDateMS uint64 `json:minDateMS` `orMethod:"DefaultMinDateMS"`
+    MinDateMS int64 `json:"minDateMS" orMethod:"DefaultMinDateMS"`
 }
 
 // Compute the default version for `MinDateMS`. Note that this method
 // has been attached with `DefaultMinDateMS`.
-func (Options) DefaultMinDateMS() (uint64, error) {
+func (Options) DefaultMinDateMS() (int64, error) {
     result := time.Now().UnixMilli() - 10000
     return result, nil
 }
@@ -262,19 +275,20 @@ can be implemented as such:
 ```go
 type AdvancedFetchRequest struct {
     Resource string `json:"resource"`
-    Number   uint8  `json:"number"` `default:"1"`
-    Options  Options `json:"options"` `default:"{}"`
+    Number   uint8  `json:"number" default:"1"`
+    Options  Options `json:"options" default:"{}"`
 
     // The instant at which the request was received.
-    date     Time
+    date     time.Time
 }
 
 func (request* AdvancedFetchRequest) Initialize() error {
     request.date = time.Now()
+	return nil
 }
 
 // Double-check that we have implemented Initializer.
-var _ godasse.validation.Initializer = &AdvancedFetchRequest{}
+var _ validation.Initializer = &AdvancedFetchRequest{}
 ```
 
 Now, Godasse will run `Initialize()` to fill in any missing fields,
@@ -298,15 +312,15 @@ Let's say, perhaps our `Number` should always be between 0 and 100?
 
 ```go
 func (request *AdvancedFetchRequest) Validate() error {
-    if request.number > 100 {
-        return fmt.Errorf("Invalid number, expected a value in [0, 100], got %d", request.number)
+    if request.Number > 100 {
+        return fmt.Errorf("Invalid number, expected a value in [0, 100], got %d", request.Number)
     }
     // Otherwise, everything is fine.
     return nil
 }
 
 // Double-check that we have implemented Validator.
-var _ godasse.validation.Validator = &AdvancedFetchRequest{}
+var _ validation.Validator = &AdvancedFetchRequest{}
 ```
 
 Now Godasse will run `Validate()` to confirm that everything is valid.
@@ -333,7 +347,7 @@ This means rewriting our example as follows:
 
 ```go
 type Options struct {
-    MinDateMS *uint64 `json:minDateMS`
+    MinDateMS *int64 `json:"minDateMS"`
 }
 
 type AdvancedFetchRequest struct {
@@ -342,7 +356,7 @@ type AdvancedFetchRequest struct {
     Options  *Options `json:"options"`
 
     // The instant at which the request was received.
-    date     *Time
+    date     *time.Time
 }
 
 func deserialize(data []byte) (*AdvancedFetchRequest, error) {
@@ -356,10 +370,10 @@ func deserialize(data []byte) (*AdvancedFetchRequest, error) {
 
     // Check for missing fields.
     if result.Resource == nil {
-        return nil, fmt.ErrorF("in AdvancedFetchRequest, field `resource` should be specified")
+        return nil, fmt.Errorf("in AdvancedFetchRequest, field `resource` should be specified")
     }
     if result.Number == nil {
-        return nil, fmt.ErrorF("in AdvancedFetchRequest, field `number` should be specified")
+        return nil, fmt.Errorf("in AdvancedFetchRequest, field `number` should be specified")
     }
     if result.Options == nil {
         result.Options = &Options {}
@@ -367,13 +381,15 @@ func deserialize(data []byte) (*AdvancedFetchRequest, error) {
 
     // Check for missing fields within fields.
     if result.Options.MinDateMS == nil {
-        result.Options.MinDateMS = time.Now().UnixMilli() - 10000
+        minDateMS := time.Now().UnixMilli() - 10000
+        result.Options.MinDateMS = &minDateMS
     }
 
-    result.date = &time.Time()
+    date := time.Now()
+    result.date = &date
 
     // Perform validation.
-    if result.Number > 100 {
+    if *result.Number > 100 {
         return nil, fmt.Errorf("invalid number, expected a value in [0, 100], got %d", result.Number)
     }
 
@@ -412,7 +428,7 @@ type Options struct {
     // Accept responses that have been generated since `MinDateMS`.
     //
     // Defaults to "now minus 10s".
-    MinDateMS uint64 `json:minDateMS`
+    MinDateMS int64 `json:"minDateMS"`
 }
 
 
@@ -422,7 +438,7 @@ type AdvancedFetchRequest struct {
     Options  Options `json:"options"`
 
     // The instant at which the request was received.
-    date     Time
+    date     time.Time
 }
 ```
 
@@ -468,12 +484,12 @@ func (dest *AdvancedFetchRequest) UnmarshalJSON(buf []byte) error {
 
     // Reject nil fields.
     if aux.Resource == nil {
-        return fmt.ErrorF("in AdvancedFetchRequest, field `resource` should be specified")
+        return fmt.Errorf("in AdvancedFetchRequest, field `resource` should be specified")
     }
     resource := *aux.Resource
 
     if aux.Number == nil {
-        return fmt.ErrorF("in AdvancedFetchRequest, field `Number` should be specified")
+        return fmt.Errorf("in AdvancedFetchRequest, field `Number` should be specified")
     }
     number := *aux.Number
 
@@ -494,7 +510,7 @@ func (dest *AdvancedFetchRequest) UnmarshalJSON(buf []byte) error {
     dest.Resource = resource
     dest.Number = number
     dest.Options = options
-    dest.time = time
+    dest.date = time
 
     // Perform validation.
     if dest.Number > 100 {
