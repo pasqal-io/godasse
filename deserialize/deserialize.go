@@ -244,7 +244,7 @@ func MakeKVListDeserializer[T any](options Options) (KVListDeserializer[T], erro
 	}
 	innerOptions := staticOptions{
 		renamingTagName: tagName,
-		allowNested:     false,
+		allowNested:     true,
 		unmarshaler:     options.Unmarshaler,
 	}
 	wrapped, err := makeOuterStructDeserializer[T](options.RootPath, innerOptions)
@@ -271,7 +271,7 @@ func MakeKVDeserializerFromReflect(options Options, typ reflect.Type) (KVListRef
 	}
 	innerOptions := staticOptions{
 		renamingTagName: tagName,
-		allowNested:     false,
+		allowNested:     true,
 		unmarshaler:     options.Unmarshaler,
 	}
 	var placeholder = reflect.New(typ).Elem()
@@ -431,9 +431,13 @@ func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string]
 
 		switch field.Type.Kind() {
 		case reflect.Array:
-			fallthrough
-		case reflect.Slice:
 			outMap[*publicFieldName] = inMap[*publicFieldName]
+		case reflect.Slice:
+			anySlice := make([]any, len(inMap[*publicFieldName]))
+			for i, elt := range inMap[*publicFieldName] {
+				anySlice[i] = elt
+			}
+			outMap[*publicFieldName] = anySlice
 		case reflect.Bool:
 			fallthrough
 		case reflect.String:
