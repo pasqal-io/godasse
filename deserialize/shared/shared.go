@@ -29,6 +29,12 @@ type Dict interface {
 
 // A driver for a specific type of deserialization.
 type Driver interface {
+	// A method called during deserializer construction whenever we enter a field.
+	Enter(string, reflect.Type) error
+
+	// A method called during deserializer construction whenever we leave a field.
+	Exit(reflect.Type)
+
 	// Return true if we have a specific implementation of deserialization
 	// for a given type, for instance, if that type implements a specific
 	// deserialization interface.

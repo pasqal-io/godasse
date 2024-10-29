@@ -18,12 +18,12 @@ linters:
     - godox
     - gofmt
     - goimports
-    - gomnd
     - gomodguard
     - gosec
     - gosmopolitan
     - govet
     - mirror
+    - mnd
     - nosprintfhostport
     - perfsprint
     - prealloc

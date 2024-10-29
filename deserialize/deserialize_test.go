@@ -76,7 +76,7 @@ var _ validation.Validator = &ValidatedStruct{} // Type assertion.
 
 func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output, error) {
 	deserializer, err := deserialize.MakeMapDeserializer[Output](deserialize.Options{
-		Unmarshaler: jsonPkg.Driver{},
+		Unmarshaler: jsonPkg.Driver,
 		MainTagName: "json",
 	})
 	if err != nil {
@@ -103,7 +103,7 @@ func twoWays[T any](t *testing.T, sample T) (*T, error) {
 
 func twoWaysListGeneric[Input any, Output any](t *testing.T, samples []Input) ([]Output, error) {
 	deserializer, err := deserialize.MakeMapDeserializer[Output](deserialize.Options{
-		Unmarshaler: jsonPkg.Driver{},
+		Unmarshaler: jsonPkg.Driver,
 		MainTagName: "json",
 	})
 	if err != nil {
@@ -124,7 +124,7 @@ func twoWaysListGeneric[Input any, Output any](t *testing.T, samples []Input) ([
 	}
 	list := []shared.Value{}
 	for _, entry := range unmarshalList {
-		list = append(list, jsonPkg.Driver{}.WrapValue(entry))
+		list = append(list, jsonPkg.Driver().WrapValue(entry))
 	}
 	return deserializer.DeserializeList(list) //nolint:wrapcheck
 }
@@ -389,6 +389,7 @@ func TestKVListSimple(t *testing.T) {
 	deserialized, err := deserializer.DeserializeKVList(entry)
 	assert.NilError(t, err)
 	assert.Equal(t, *deserialized, sample, "We should have extracted the expected value")
+
 }
 
 // Test that if we place a string instead of a primitive type, this string
@@ -1324,4 +1325,101 @@ func TestKVDeserializeWithPrivate(t *testing.T) {
 	deserialized, err := deserializer.DeserializeKVList(kvList)
 	assert.NilError(t, err)
 	assert.Equal(t, *deserialized, sample)
+}
+
+// ------ Test that we can deserialize things more complicated than just `[]string` with KVList
+
+type StructWithPrimitiveSlices struct {
+	SomeStrings []string
+	SomeInts    []int
+	SomeInt8    []int8
+	SomeInt16   []int16
+	SomeInt32   []int32
+	SomeInt64   []int64
+	SomeUints   []uint
+	SomeUint8   []uint8
+	SomeUint16  []uint16
+	SomeUint32  []uint32
+	SomeUint64  []uint64
+	SomeBools   []bool
+	SomeFloat32 []float32
+	SomeFloat64 []float64
+}
+
+func TestKVDeserializePrimitiveSlices(t *testing.T) {
+	deserializer, err := deserialize.MakeKVListDeserializer[StructWithPrimitiveSlices](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	sample := StructWithPrimitiveSlices{
+		SomeStrings: []string{"abc", "def"},
+		SomeInts:    []int{15, 0, -15},
+		SomeInt8:    []int8{0, -2, 4, 8},
+		SomeInt16:   []int16{16, -32, 64},
+		SomeInt32:   []int32{128, -256, 512},
+		SomeInt64:   []int64{1024, -2048, 4096},
+		SomeUints:   []uint{0, 2, 4, 8},
+		SomeUint8:   []uint8{16, 32, 64, 128},
+		SomeUint16:  []uint16{256, 512, 1024, 2048},
+		SomeUint32:  []uint32{4096, 8192, 16364},
+		SomeUint64:  []uint64{32768, 65536},
+		SomeBools:   []bool{true, true, false, true},
+		SomeFloat32: []float32{3.1415, 1.2},
+		SomeFloat64: []float64{42.0},
+	}
+
+	kvlist := make(map[string][]string, 0)
+
+	kvlist["SomeStrings"] = []string{"abc", "def"}
+	kvlist["SomeInts"] = []string{"15", "0", "-15"}
+	kvlist["SomeInt8"] = []string{"0", "-2", "4", "8"}
+	kvlist["SomeInt16"] = []string{"16", "-32", "64"}
+	kvlist["SomeInt32"] = []string{"128", "-256", "512"}
+	kvlist["SomeInt64"] = []string{"1024", "-2048", "4096"}
+	kvlist["SomeUints"] = []string{"0", "2", "4", "8"}
+	kvlist["SomeUint8"] = []string{"16", "32", "64", "128"}
+	kvlist["SomeUint16"] = []string{"256", "512", "1024", "2048"}
+	kvlist["SomeUint32"] = []string{"4096", "8192", "16364"}
+	kvlist["SomeUint64"] = []string{"32768", "65536"}
+	kvlist["SomeBools"] = []string{"true", "true", "false", "true"}
+	kvlist["SomeFloat32"] = []string{"3.1415", "1.2"}
+	kvlist["SomeFloat64"] = []string{"42.0"}
+
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, sample)
+
+}
+
+func TestDeserializeUUIDKVList(t *testing.T) {
+	deserializer, err := deserialize.MakeKVListDeserializer[StructWithUUID](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	// This is deserializable because the field supports `TextUnmarshal`
+	sample := StructWithUUID{
+		Field: TextUnmarshalerUUID(uuid.New()),
+	}
+
+	marshaledField, err := uuid.UUID(sample.Field).MarshalText()
+	assert.NilError(t, err)
+	kvlist := make(map[string][]string, 0)
+	kvlist["Field"] = []string{string(marshaledField)}
+
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, sample)
+}
+
+// ------ Test that KVList detects structures that it cannot deserialize
+
+// A struct that just can't be deserialized.
+type StructWithChan struct {
+	Chan chan int
+}
+
+func TestKVCannotDeserializeChan(t *testing.T) {
+	_, err := deserialize.MakeKVListDeserializer[StructWithChan](deserialize.QueryOptions(""))
+	if err == nil {
+		t.Fatal("this should have failed")
+	}
+	assert.ErrorContains(t, err, "chan int")
 }
