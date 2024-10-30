@@ -12,7 +12,11 @@ import (
 )
 
 // The deserialization driver for JSON.
-type Driver struct{}
+type driver struct{}
+
+func Driver() shared.Driver {
+	return driver{}
+}
 
 // A JSON value.
 type Value struct {
@@ -91,7 +95,7 @@ var textUnmarshaler = reflect.TypeOf(new(encoding.TextUnmarshaler)).Elem()
 // - `typ` implements `json.Unmarshaler`.
 //
 // You probably won't ever need to call this method.
-func (u Driver) ShouldUnmarshal(typ reflect.Type) bool {
+func (driver) ShouldUnmarshal(typ reflect.Type) bool {
 	if typ.ConvertibleTo(dictionary) {
 		return true
 	}
@@ -102,7 +106,7 @@ func (u Driver) ShouldUnmarshal(typ reflect.Type) bool {
 // Perform unmarshaling.
 //
 // You probably won't ever need to call this method.
-func (u Driver) Unmarshal(in any, out *any) (err error) {
+func (u driver) Unmarshal(in any, out *any) (err error) {
 	defer func() {
 		// Attempt to intercept errors that leak implementation details.
 		if err != nil {
@@ -163,10 +167,18 @@ func (u Driver) Unmarshal(in any, out *any) (err error) {
 	return fmt.Errorf("failed to unmarshal '%s': \n\t * %w", buf, err)
 }
 
-func (u Driver) WrapValue(wrapped any) shared.Value {
+func (driver) WrapValue(wrapped any) shared.Value {
 	return Value{
 		wrapped: wrapped,
 	}
 }
 
-var _ shared.Driver = Driver{} // Type assertion.
+func (driver) Enter(string, reflect.Type) error {
+	// No particular protocol to follow.
+	return nil
+}
+func (driver) Exit(reflect.Type) {
+	// No particular protocol to follow.
+}
+
+var _ shared.Driver = driver{} // Type assertion.
