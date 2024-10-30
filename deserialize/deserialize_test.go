@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -325,7 +326,8 @@ func TestValidationFailureField(t *testing.T) {
 		SomeEmail: "someone+example.com",
 	}
 	_, err := twoWays(t, before)
-	assert.Equal(t, err.Error(), "deserialized value ValidatedStruct did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.ErrorContains(t, err, "ValidatedStruct")
+	assert.ErrorContains(t, err, "Invalid email")
 }
 
 func TestValidationFailureFieldField(t *testing.T) {
@@ -336,7 +338,8 @@ func TestValidationFailureFieldField(t *testing.T) {
 		},
 	}
 	_, err := twoWays(t, before)
-	assert.Equal(t, err.Error(), "deserialized value Pair[int,ValidatedStruct].right did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.ErrorContains(t, err, ".right")
+	assert.ErrorContains(t, err, "Invalid email")
 }
 
 func TestValidationFailureArray(t *testing.T) {
@@ -347,7 +350,8 @@ func TestValidationFailureArray(t *testing.T) {
 		Data: array,
 	}
 	_, err := twoWays(t, before)
-	assert.Equal(t, err.Error(), "error while deserializing Array[ValidatedStruct].Data[0]:\n\t * deserialized value Array[ValidatedStruct].Data[] did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.ErrorContains(t, err, "Data[0]")
+	assert.ErrorContains(t, err, "Invalid email")
 }
 
 func TestKVListSimple(t *testing.T) {
@@ -1422,4 +1426,58 @@ func TestKVCannotDeserializeChan(t *testing.T) {
 		t.Fatal("this should have failed")
 	}
 	assert.ErrorContains(t, err, "chan int")
+}
+
+// ------ Test that KVList calls validation
+
+type CustomStructWithValidation struct {
+	Field int
+}
+
+func (c *CustomStructWithValidation) Validate() error {
+	if c.Field < 0 {
+		return errors.New("custom validation error")
+	}
+	return nil
+}
+
+func (c *CustomStructWithValidation) UnmarshalText(source []byte) error {
+	result, err := strconv.Atoi(string(source))
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	c.Field = result
+	return nil
+}
+
+func TestKVCallsInnerValidation(t *testing.T) {
+	type Struct struct {
+		Inner CustomStructWithValidation
+	}
+	deserializer, err := deserialize.MakeKVListDeserializer[Struct](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	goodSample := Struct{
+		Inner: CustomStructWithValidation{
+			Field: 123,
+		},
+	}
+
+	kvlist := make(map[string][]string, 0)
+	kvlist["Inner"] = []string{strconv.Itoa(goodSample.Inner.Field)}
+
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, goodSample)
+
+	badSample := Struct{
+		Inner: CustomStructWithValidation{
+			Field: -123,
+		},
+	}
+
+	kvlist["Inner"] = []string{strconv.Itoa(badSample.Inner.Field)}
+
+	_, err = deserializer.DeserializeKVList(kvlist)
+	assert.ErrorContains(t, err, "custom validation error")
 }

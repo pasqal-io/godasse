@@ -450,33 +450,7 @@ func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string]
 			fallthrough
 		case reflect.Slice:
 			outMap[*publicFieldName] = inMap[*publicFieldName]
-		case reflect.Bool:
-			fallthrough
-		case reflect.String:
-			fallthrough
-		case reflect.Float32:
-			fallthrough
-		case reflect.Float64:
-			fallthrough
-		case reflect.Int:
-			fallthrough
-		case reflect.Int8:
-			fallthrough
-		case reflect.Int16:
-			fallthrough
-		case reflect.Int32:
-			fallthrough
-		case reflect.Int64:
-			fallthrough
-		case reflect.Uint:
-			fallthrough
-		case reflect.Uint8:
-			fallthrough
-		case reflect.Uint16:
-			fallthrough
-		case reflect.Uint32:
-			fallthrough
-		case reflect.Uint64:
+		default:
 			length := len(inMap[*publicFieldName])
 			switch length {
 			case 0: // No value.
@@ -485,8 +459,6 @@ func deListMapReflect(typ reflect.Type, outMap map[string]any, inMap map[string]
 			default:
 				return fmt.Errorf("cannot fit %d elements into a single entry of field %s.%s", length, typ.Name(), field.Name)
 			}
-		default:
-			panic("This should not happen")
 		}
 	}
 	return nil
@@ -738,8 +710,8 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options in
 			if validator, ok := mightValidate.(validation.Validator); ok {
 				err = validator.Validate()
 				if err != nil {
-					// Validation error, abort struct construction.
-					err = fmt.Errorf("deserialized value %s did not pass validation\n\t * %w", path, err)
+					// Validation error, abort struct construction, wrap the error so that we can catch it.
+					err = validation.WrapError(path, err)
 					result = reflect.Zero(typ)
 				}
 			}
@@ -807,7 +779,7 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options in
 			}
 		}
 		outPtr.Set(result)
-		return nil
+		return err
 	}
 	return result, nil
 }
@@ -1330,8 +1302,9 @@ func makeFieldDeserializerFromReflect(fieldPath string, fieldType reflect.Type, 
 	// We have both a flat and a structured deserializer. Need to try both!
 	var combined reflectDeserializer = func(slot *reflect.Value, data shared.Value) error {
 		err := structured(slot, data)
-		if err == nil {
-			return nil
+		if err == nil || errors.As(err, &validation.Error{}) { //nolint:exhaustruct
+			// Don't try to recover from a validation error by switching to the next deserializer!
+			return err
 		}
 		err2 := flat(slot, data)
 		if err2 == nil {
