@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ var _ validation.Validator = &ValidatedStruct{} // Type assertion.
 
 func twoWaysGeneric[Input any, Output any](t *testing.T, sample Input) (*Output, error) {
 	deserializer, err := deserialize.MakeMapDeserializer[Output](deserialize.Options{
-		Unmarshaler: jsonPkg.Driver{},
+		Unmarshaler: jsonPkg.Driver,
 		MainTagName: "json",
 	})
 	if err != nil {
@@ -103,7 +104,7 @@ func twoWays[T any](t *testing.T, sample T) (*T, error) {
 
 func twoWaysListGeneric[Input any, Output any](t *testing.T, samples []Input) ([]Output, error) {
 	deserializer, err := deserialize.MakeMapDeserializer[Output](deserialize.Options{
-		Unmarshaler: jsonPkg.Driver{},
+		Unmarshaler: jsonPkg.Driver,
 		MainTagName: "json",
 	})
 	if err != nil {
@@ -124,7 +125,7 @@ func twoWaysListGeneric[Input any, Output any](t *testing.T, samples []Input) ([
 	}
 	list := []shared.Value{}
 	for _, entry := range unmarshalList {
-		list = append(list, jsonPkg.Driver{}.WrapValue(entry))
+		list = append(list, jsonPkg.Driver().WrapValue(entry))
 	}
 	return deserializer.DeserializeList(list) //nolint:wrapcheck
 }
@@ -325,7 +326,8 @@ func TestValidationFailureField(t *testing.T) {
 		SomeEmail: "someone+example.com",
 	}
 	_, err := twoWays(t, before)
-	assert.Equal(t, err.Error(), "deserialized value ValidatedStruct did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.ErrorContains(t, err, "ValidatedStruct")
+	assert.ErrorContains(t, err, "Invalid email")
 }
 
 func TestValidationFailureFieldField(t *testing.T) {
@@ -336,7 +338,8 @@ func TestValidationFailureFieldField(t *testing.T) {
 		},
 	}
 	_, err := twoWays(t, before)
-	assert.Equal(t, err.Error(), "deserialized value Pair[int,ValidatedStruct].right did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.ErrorContains(t, err, ".right")
+	assert.ErrorContains(t, err, "Invalid email")
 }
 
 func TestValidationFailureArray(t *testing.T) {
@@ -347,7 +350,8 @@ func TestValidationFailureArray(t *testing.T) {
 		Data: array,
 	}
 	_, err := twoWays(t, before)
-	assert.Equal(t, err.Error(), "error while deserializing Array[ValidatedStruct].Data[0]:\n\t * deserialized value Array[ValidatedStruct].Data[] did not pass validation\n\t * Invalid email", "Validation should have caught the error")
+	assert.ErrorContains(t, err, "Data[0]")
+	assert.ErrorContains(t, err, "Invalid email")
 }
 
 func TestKVListSimple(t *testing.T) {
@@ -389,6 +393,7 @@ func TestKVListSimple(t *testing.T) {
 	deserialized, err := deserializer.DeserializeKVList(entry)
 	assert.NilError(t, err)
 	assert.Equal(t, *deserialized, sample, "We should have extracted the expected value")
+
 }
 
 // Test that if we place a string instead of a primitive type, this string
@@ -1324,4 +1329,155 @@ func TestKVDeserializeWithPrivate(t *testing.T) {
 	deserialized, err := deserializer.DeserializeKVList(kvList)
 	assert.NilError(t, err)
 	assert.Equal(t, *deserialized, sample)
+}
+
+// ------ Test that we can deserialize things more complicated than just `[]string` with KVList
+
+type StructWithPrimitiveSlices struct {
+	SomeStrings []string
+	SomeInts    []int
+	SomeInt8    []int8
+	SomeInt16   []int16
+	SomeInt32   []int32
+	SomeInt64   []int64
+	SomeUints   []uint
+	SomeUint8   []uint8
+	SomeUint16  []uint16
+	SomeUint32  []uint32
+	SomeUint64  []uint64
+	SomeBools   []bool
+	SomeFloat32 []float32
+	SomeFloat64 []float64
+}
+
+func TestKVDeserializePrimitiveSlices(t *testing.T) {
+	deserializer, err := deserialize.MakeKVListDeserializer[StructWithPrimitiveSlices](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	sample := StructWithPrimitiveSlices{
+		SomeStrings: []string{"abc", "def"},
+		SomeInts:    []int{15, 0, -15},
+		SomeInt8:    []int8{0, -2, 4, 8},
+		SomeInt16:   []int16{16, -32, 64},
+		SomeInt32:   []int32{128, -256, 512},
+		SomeInt64:   []int64{1024, -2048, 4096},
+		SomeUints:   []uint{0, 2, 4, 8},
+		SomeUint8:   []uint8{16, 32, 64, 128},
+		SomeUint16:  []uint16{256, 512, 1024, 2048},
+		SomeUint32:  []uint32{4096, 8192, 16364},
+		SomeUint64:  []uint64{32768, 65536},
+		SomeBools:   []bool{true, true, false, true},
+		SomeFloat32: []float32{3.1415, 1.2},
+		SomeFloat64: []float64{42.0},
+	}
+
+	kvlist := make(map[string][]string, 0)
+
+	kvlist["SomeStrings"] = []string{"abc", "def"}
+	kvlist["SomeInts"] = []string{"15", "0", "-15"}
+	kvlist["SomeInt8"] = []string{"0", "-2", "4", "8"}
+	kvlist["SomeInt16"] = []string{"16", "-32", "64"}
+	kvlist["SomeInt32"] = []string{"128", "-256", "512"}
+	kvlist["SomeInt64"] = []string{"1024", "-2048", "4096"}
+	kvlist["SomeUints"] = []string{"0", "2", "4", "8"}
+	kvlist["SomeUint8"] = []string{"16", "32", "64", "128"}
+	kvlist["SomeUint16"] = []string{"256", "512", "1024", "2048"}
+	kvlist["SomeUint32"] = []string{"4096", "8192", "16364"}
+	kvlist["SomeUint64"] = []string{"32768", "65536"}
+	kvlist["SomeBools"] = []string{"true", "true", "false", "true"}
+	kvlist["SomeFloat32"] = []string{"3.1415", "1.2"}
+	kvlist["SomeFloat64"] = []string{"42.0"}
+
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, sample)
+
+}
+
+func TestDeserializeUUIDKVList(t *testing.T) {
+	deserializer, err := deserialize.MakeKVListDeserializer[StructWithUUID](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	// This is deserializable because the field supports `TextUnmarshal`
+	sample := StructWithUUID{
+		Field: TextUnmarshalerUUID(uuid.New()),
+	}
+
+	marshaledField, err := uuid.UUID(sample.Field).MarshalText()
+	assert.NilError(t, err)
+	kvlist := make(map[string][]string, 0)
+	kvlist["Field"] = []string{string(marshaledField)}
+
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, sample)
+}
+
+// ------ Test that KVList detects structures that it cannot deserialize
+
+// A struct that just can't be deserialized.
+type StructWithChan struct {
+	Chan chan int
+}
+
+func TestKVCannotDeserializeChan(t *testing.T) {
+	_, err := deserialize.MakeKVListDeserializer[StructWithChan](deserialize.QueryOptions(""))
+	if err == nil {
+		t.Fatal("this should have failed")
+	}
+	assert.ErrorContains(t, err, "chan int")
+}
+
+// ------ Test that KVList calls validation
+
+type CustomStructWithValidation struct {
+	Field int
+}
+
+func (c *CustomStructWithValidation) Validate() error {
+	if c.Field < 0 {
+		return errors.New("custom validation error")
+	}
+	return nil
+}
+
+func (c *CustomStructWithValidation) UnmarshalText(source []byte) error {
+	result, err := strconv.Atoi(string(source))
+	if err != nil {
+		return err //nolint:wrapcheck
+	}
+	c.Field = result
+	return nil
+}
+
+func TestKVCallsInnerValidation(t *testing.T) {
+	type Struct struct {
+		Inner CustomStructWithValidation
+	}
+	deserializer, err := deserialize.MakeKVListDeserializer[Struct](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	goodSample := Struct{
+		Inner: CustomStructWithValidation{
+			Field: 123,
+		},
+	}
+
+	kvlist := make(map[string][]string, 0)
+	kvlist["Inner"] = []string{strconv.Itoa(goodSample.Inner.Field)}
+
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, goodSample)
+
+	badSample := Struct{
+		Inner: CustomStructWithValidation{
+			Field: -123,
+		},
+	}
+
+	kvlist["Inner"] = []string{strconv.Itoa(badSample.Inner.Field)}
+
+	_, err = deserializer.DeserializeKVList(kvlist)
+	assert.ErrorContains(t, err, "custom validation error")
 }

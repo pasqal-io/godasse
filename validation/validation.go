@@ -49,16 +49,34 @@ type Validator interface {
 // Use errors.As() or Unwrap() to expose the error returned by Validate().
 type Error struct {
 	// Where the validation error happened.
-	path *path
+	//
+	// As of this writing, the structured path is only constructed when
+	// we create the error by calling `validation.Validate`.
+	structuredPath *path
+
+	// An unstructured path that may be provided when creating an `Error`
+	// manually.
+	unstructedPath string
 
 	// The error returned by `Validate()`.
 	wrapped error
 }
 
+// Wrap an error as a validation error.
+func WrapError(at string, wrapped error) Error {
+	return Error{
+		structuredPath: nil,
+		unstructedPath: at,
+		wrapped:        wrapped,
+	}
+}
+
 // Extract a human-readable string.
 func (v Error) Error() string {
+	serialized := v.unstructedPath
+
 	buf := []string{}
-	cursor := v.path
+	cursor := v.structuredPath
 	for cursor != nil {
 		switch cursor.kind {
 		case kindField:
@@ -78,11 +96,10 @@ func (v Error) Error() string {
 		}
 		cursor = cursor.prev
 	}
-	serialized := ""
 	for i := len(buf) - 1; i >= 0; i-- {
 		serialized += buf[i]
 	}
-	return fmt.Sprintf("validation error at %s:\n\t * %s", buf, v.wrapped.Error())
+	return fmt.Sprintf("validation error at %s:\n\t * %s", serialized, v.wrapped.Error())
 }
 
 // Unwrap the underlying validation error.
@@ -213,8 +230,9 @@ func validateReflect(path *path, value reflect.Value) error {
 		if validator, ok := asAny.(Validator); ok {
 			if err := validator.Validate(); err != nil {
 				return Error{
-					wrapped: err,
-					path:    path,
+					wrapped:        err,
+					structuredPath: path,
+					unstructedPath: "",
 				}
 			}
 		}

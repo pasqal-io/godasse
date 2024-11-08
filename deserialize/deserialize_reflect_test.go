@@ -15,7 +15,7 @@ func twoWaysReflect[Input any, Output any](t *testing.T, sample Input) (*Output,
 	var placeholderOutput Output
 	typeOutput := reflect.TypeOf(placeholderOutput)
 	deserializer, err := deserialize.MakeMapDeserializerFromReflect(deserialize.Options{
-		Unmarshaler: jsonPkg.Driver{},
+		Unmarshaler: jsonPkg.Driver,
 		MainTagName: "json",
 		RootPath:    "",
 	}, typeOutput)
@@ -70,7 +70,7 @@ func TestReflectKVDeserializer(t *testing.T) {
 		Int:    123,
 	}
 	deserializer, err := deserialize.MakeKVDeserializerFromReflect(deserialize.Options{
-		Unmarshaler: jsonPkg.Driver{},
+		Unmarshaler: jsonPkg.Driver,
 		MainTagName: "json",
 		RootPath:    "",
 	}, reflect.TypeOf(sample))
