@@ -161,8 +161,33 @@ func (tags Tags) IsPreinitialized() bool {
 	return ok
 }
 
+// Return `true` if this field is marked as `flatten`, e.g.
+//
+//	type Flattening struct {
+//	    A string
+//	    B struct {
+//	        C string
+//	        D string
+//	    } // `flatten:""`
+//	}
+//
+// should deserialized from the following JSON
+//
+//	{
+//	   "A": "aaaaa",
+//	   // no field B
+//	   "C": "ccccc",
+//	   "D": "ddddd"
+//	}
+func (tags Tags) IsFlattened() bool {
+	tags.witness.Assert()
+	_, ok := tags.tags["flatten"]
+	return ok
+}
+
 // Lookup a key.
 func (tags Tags) Lookup(key string) ([]string, bool) {
+	tags.witness.Assert()
 	result, ok := tags.tags[key]
 	return result, ok
 }

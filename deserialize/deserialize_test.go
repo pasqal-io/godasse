@@ -1481,3 +1481,80 @@ func TestKVCallsInnerValidation(t *testing.T) {
 	_, err = deserializer.DeserializeKVList(kvlist)
 	assert.ErrorContains(t, err, "custom validation error")
 }
+
+// ------ Test that flattened structs are deserialized properly.
+func TestMapDeserializerFlattened(t *testing.T) {
+	type Inner struct {
+		Left  string
+		Right string
+	}
+	type Outer struct {
+		Flattened Inner `flatten:""`
+		Inner
+		Regular Inner
+	}
+
+	deserializer, err := deserialize.MakeMapDeserializer[Outer](deserialize.JSONOptions(""))
+	assert.NilError(t, err)
+
+	data := `
+	{
+		"Left": "flattened_left",
+		"Right": "flattened_right",
+		"Regular": {
+			"Left": "regular_left",
+			"Right": "regular_right"
+		}
+	}`
+	expected := Outer{
+		Flattened: Inner{
+			Left:  "flattened_left",
+			Right: "flattened_right",
+		},
+		Inner: Inner{
+			Left:  "flattened_left",
+			Right: "flattened_right",
+		},
+		Regular: Inner{
+			Left:  "regular_left",
+			Right: "regular_right",
+		},
+	}
+	found, err := deserializer.DeserializeBytes([]byte(data))
+	assert.NilError(t, err)
+
+	assert.DeepEqual(t, *found, expected)
+}
+
+func TestKVDeserializerFlattened(t *testing.T) {
+	type Inner struct {
+		Left  string
+		Right string
+	}
+	type Outer struct {
+		Flattened Inner `flatten:""`
+		Inner
+	}
+
+	deserializer, err := deserialize.MakeKVListDeserializer[Outer](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	data := make(map[string][]string)
+	data["Left"] = []string{"flattened_left"}
+	data["Right"] = []string{"flattened_right"}
+
+	expected := Outer{
+		Flattened: Inner{
+			Left:  "flattened_left",
+			Right: "flattened_right",
+		},
+		Inner: Inner{
+			Left:  "flattened_left",
+			Right: "flattened_right",
+		},
+	}
+	found, err := deserializer.DeserializeKVList(data)
+	assert.NilError(t, err)
+
+	assert.DeepEqual(t, *found, expected)
+}

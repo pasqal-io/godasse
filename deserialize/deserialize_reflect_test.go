@@ -60,6 +60,29 @@ func TestReflectMapDeserializer(t *testing.T) {
 	assert.DeepEqual(t, &sample, out)
 }
 
+func TestReflectMapEmbeddedDeserializer(t *testing.T) {
+	type Inner struct {
+		Nested string
+	}
+	type Outer struct {
+		Inner
+		String string
+		Int    int
+	}
+	sample := Outer{
+		Inner: Inner{
+			Nested: "def",
+		},
+		String: "abc",
+		Int:    123,
+	}
+	out, err := twoWaysReflect[Outer, Outer](t, sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.DeepEqual(t, &sample, out)
+}
+
 func TestReflectKVDeserializer(t *testing.T) {
 	type Test struct {
 		String string
@@ -81,6 +104,72 @@ func TestReflectKVDeserializer(t *testing.T) {
 	kvList["Int"] = []string{strconv.Itoa(sample.Int)}
 
 	deserialized := new(Test)
+	reflectDeserialized := reflect.ValueOf(deserialized).Elem()
+	err = deserializer.DeserializeKVListTo(kvList, &reflectDeserialized)
+	assert.NilError(t, err)
+	assert.Equal(t, *deserialized, sample)
+}
+
+// Should be useful for books, as we wouldn't have to recreate a Pagination struct for each route for example.
+func TestNestedStructReflectKVDeserializer(t *testing.T) {
+	type NestedStruct struct {
+		BBB string
+	}
+	type MainStruct struct {
+		AAA          string
+		NestedStruct NestedStruct `flatten:""`
+	}
+	sample := MainStruct{
+		AAA: "aaa",
+		NestedStruct: NestedStruct{
+			BBB: "bbb",
+		},
+	}
+
+	deserializer, err := deserialize.MakeKVDeserializerFromReflect(deserialize.Options{
+		Unmarshaler: jsonPkg.Driver,
+		MainTagName: "json",
+		RootPath:    "",
+	}, reflect.TypeOf(sample))
+	assert.NilError(t, err)
+
+	kvList := map[string][]string{}
+	kvList["AAA"] = []string{sample.AAA}
+	kvList["BBB"] = []string{sample.NestedStruct.BBB}
+
+	deserialized := new(MainStruct)
+	reflectDeserialized := reflect.ValueOf(deserialized).Elem()
+	err = deserializer.DeserializeKVListTo(kvList, &reflectDeserialized)
+	assert.NilError(t, err)
+	assert.Equal(t, *deserialized, sample)
+}
+
+// Not mandatory, but could be nice to have.
+func TestAnonymStructReflectKVDeserializer(t *testing.T) {
+	type EmbeddedStruct struct {
+		BBB string
+	}
+	type MainStruct struct {
+		AAA            string
+		EmbeddedStruct // Embedded struct are anonymous fields in reflection, flattened automatically.
+	}
+	sample := MainStruct{
+		AAA:            "aaa",
+		EmbeddedStruct: EmbeddedStruct{BBB: "bbb"},
+	}
+
+	deserializer, err := deserialize.MakeKVDeserializerFromReflect(deserialize.Options{
+		Unmarshaler: jsonPkg.Driver,
+		MainTagName: "json",
+		RootPath:    "",
+	}, reflect.TypeOf(sample))
+	assert.NilError(t, err)
+
+	kvList := map[string][]string{}
+	kvList["AAA"] = []string{sample.AAA}
+	kvList["BBB"] = []string{sample.BBB} // Embedded struct fields can be accessed like if it was at root level
+
+	deserialized := new(MainStruct)
 	reflectDeserialized := reflect.ValueOf(deserialized).Elem()
 	err = deserializer.DeserializeKVListTo(kvList, &reflectDeserialized)
 	assert.NilError(t, err)
