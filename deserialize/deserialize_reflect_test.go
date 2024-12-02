@@ -175,3 +175,26 @@ func TestAnonymStructReflectKVDeserializer(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Equal(t, *deserialized, sample)
 }
+
+// KVListDeserializerFromReflect doesn't work with arrays with non-primitive types with a primitive Kind.
+func TestReflectKVDeserializerUnderlyingPrimitiveSlices(t *testing.T) {
+	type TestType string
+	type TestStruct struct {
+		TestField []TestType
+	}
+	sample := TestStruct{
+		TestField: []TestType{"abc"},
+	}
+
+	deserializer, err := deserialize.MakeKVDeserializerFromReflect(deserialize.QueryOptions(""), reflect.TypeOf(sample))
+	assert.NilError(t, err)
+
+	kvList := map[string][]string{}
+	kvList["TestField"] = []string{"abc"}
+
+	deserialized := new(TestStruct)
+	reflectDeserialized := reflect.ValueOf(deserialized).Elem()
+	err = deserializer.DeserializeKVListTo(kvList, &reflectDeserialized)
+	assert.NilError(t, err)
+	assert.Equal(t, *deserialized, sample)
+}
