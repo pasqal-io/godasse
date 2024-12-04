@@ -1558,3 +1558,25 @@ func TestKVDeserializerFlattened(t *testing.T) {
 
 	assert.DeepEqual(t, *found, expected)
 }
+
+// KVListDeserializer works with arrays with non-primitive types with a primitive Kind.
+func TestKVDeserializeUnderlyingPrimitiveSlices(t *testing.T) {
+	type TestType string
+	type TestStruct struct {
+		TestField []TestType
+	}
+
+	deserializer, err := deserialize.MakeKVListDeserializer[TestStruct](deserialize.QueryOptions(""))
+	assert.NilError(t, err)
+
+	sample := TestStruct{
+		TestField: []TestType{"abc"},
+	}
+
+	kvlist := make(map[string][]string)
+	kvlist["TestField"] = []string{"abc"}
+
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, sample)
+}

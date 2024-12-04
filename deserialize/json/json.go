@@ -41,14 +41,22 @@ func (v Value) AsDict() (shared.Dict, bool) {
 	}
 }
 func (v Value) AsSlice() ([]shared.Value, bool) {
-	if wrapped, ok := v.wrapped.([]any); ok {
-		result := make([]shared.Value, len(wrapped))
-		for i, value := range wrapped {
-			result[i] = Value{wrapped: value}
+	// We can't simply cast to `[]any`, as this doesn't work for e.g. `[]string`.
+	reflected := reflect.ValueOf(v.wrapped)
+	switch reflected.Type().Kind() {
+	case reflect.Array:
+		fallthrough
+	case reflect.Slice:
+		length := reflected.Len()
+		result := make([]shared.Value, length)
+		for i := 0; i < length; i++ {
+			value := reflected.Index(i)
+			result[i] = Value{wrapped: value.Interface()}
 		}
 		return result, true
+	default:
+		return nil, false
 	}
-	return nil, false
 }
 func (v Value) Interface() any {
 	return v.wrapped

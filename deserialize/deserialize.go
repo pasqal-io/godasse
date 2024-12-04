@@ -315,13 +315,13 @@ type kvReflectDeserializer struct {
 }
 
 func (kvrd kvReflectDeserializer) DeserializeKVListTo(value kvlist.KVList, reflectOut *reflect.Value) error {
-	normalized := make(jsonPkg.JSON)
+	normalized := make(map[string]any)
 	err := deListMapReflect(kvrd.typ, normalized, value, kvrd.options)
 	if err != nil {
 		return err
 	}
 
-	err = kvrd.reflectDeserializer(reflectOut, normalized.AsValue())
+	err = kvrd.reflectDeserializer(reflectOut, kvlist.MakeRootDict(normalized).AsValue())
 	if err != nil {
 		return err
 	}

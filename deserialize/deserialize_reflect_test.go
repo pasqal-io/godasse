@@ -144,7 +144,6 @@ func TestNestedStructReflectKVDeserializer(t *testing.T) {
 	assert.Equal(t, *deserialized, sample)
 }
 
-// Not mandatory, but could be nice to have.
 func TestAnonymStructReflectKVDeserializer(t *testing.T) {
 	type EmbeddedStruct struct {
 		BBB string
@@ -174,4 +173,36 @@ func TestAnonymStructReflectKVDeserializer(t *testing.T) {
 	err = deserializer.DeserializeKVListTo(kvList, &reflectDeserialized)
 	assert.NilError(t, err)
 	assert.Equal(t, *deserialized, sample)
+}
+
+// A bug we encountered in previous versions: KVDeserializerFromReflect
+// did not manage to see through an alias `[]TestType` = `[]string`.
+func TestReflectKVDeserializerUnderlyingPrimitiveSlices(t *testing.T) {
+	type StringAlias string
+	type Int8Alias uint8
+	type BoolAlias bool
+	type TestStruct struct {
+		Strings []StringAlias
+		Int8s   []Int8Alias
+		Bools   []BoolAlias
+	}
+	sample := TestStruct{
+		Strings: []StringAlias{"abc"},
+		Int8s:   []Int8Alias{1, 2, 3},
+		Bools:   []BoolAlias{true, true, false},
+	}
+
+	deserializer, err := deserialize.MakeKVDeserializerFromReflect(deserialize.QueryOptions(""), reflect.TypeOf(sample))
+	assert.NilError(t, err)
+
+	kvList := map[string][]string{}
+	kvList["Strings"] = []string{"abc"}
+	kvList["Int8s"] = []string{"1", "2", "3"}
+	kvList["Bools"] = []string{"true", "true", "false"}
+
+	deserialized := new(TestStruct)
+	reflectDeserialized := reflect.ValueOf(deserialized).Elem()
+	err = deserializer.DeserializeKVListTo(kvList, &reflectDeserialized)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, *deserialized, sample)
 }
