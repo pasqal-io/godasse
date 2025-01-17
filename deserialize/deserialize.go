@@ -743,7 +743,9 @@ func makeStructDeserializerFromReflect(path string, typ reflect.Type, options in
 			mightValidate := resultPtr.Interface()
 			if validator, ok := mightValidate.(validation.Validator); ok {
 				err = validator.Validate()
-				if err != nil {
+				if err == nil {
+					outPtr.Set(result) // Note: Wait, are we copying everything here?
+				} else {
 					// Validation error, abort struct construction, wrap the error so that we can catch it.
 					err = validation.WrapError(path, err)
 					result = reflect.Zero(typ)

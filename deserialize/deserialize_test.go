@@ -1580,3 +1580,26 @@ func TestKVDeserializeUnderlyingPrimitiveSlices(t *testing.T) {
 	assert.NilError(t, err)
 	assert.DeepEqual(t, *deserialized, sample)
 }
+
+// --- Testing side-effects during validation.
+
+type TestValidateModifyStruct struct {
+	A string
+}
+
+func (t *TestValidateModifyStruct) Validate() error {
+	t.A = strings.ToLower(t.A)
+	return nil
+}
+
+func TestValidateModify(t *testing.T) {
+	kvlist := make(map[string][]string)
+	kvlist["A"] = []string{"ABC"}
+
+	deserializer, err := deserialize.MakeKVListDeserializer[TestValidateModifyStruct](deserialize.JSONOptions(""))
+	assert.NilError(t, err)
+	deserialized, err := deserializer.DeserializeKVList(kvlist)
+	assert.NilError(t, err)
+	fmt.Println(*deserialized)
+	assert.Equal(t, deserialized.A, "abc")
+}
